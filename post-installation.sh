@@ -119,10 +119,23 @@ read -r -p "This also installs neovim module in conda's base environment. [Y/n] 
 if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
     echo "Installing Neovim from Homebrew..."
     (
+        SHELL_NAME=$(basename "$SHELL")
+        case "$SHELL_NAME" in
+            bash)
+                SHELL_RC="$HOME/.bashrc"
+                ;;
+            zsh)
+                SHELL_RC="$HOME/.zshrc"
+                ;;
+            *)
+                echo "Unsupported shell: $SHELL_NAME"
+                exit 1
+                ;;
+        esac
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         brew install neovim
         brew install node@24
-        export PATH="$(brew --prefix)/opt/node@24/bin:$PATH"
+        echo "export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:\$PATH"" >> "$SHELL_RC"
         brew install tree-sitter-cli
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate base
