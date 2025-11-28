@@ -1,0 +1,5 @@
+alias ls="ls --color=always"
+alias l="ls -lh"
+alias ll="ls -Alh"
+alias c="clear"
+alias cls="c && l"
