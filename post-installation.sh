@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # This script installs common packages.
-set -euxo pipefail
+set -euo pipefail
 
 # Check if apt is available
 if ! command -v apt &> /dev/null; then
@@ -27,14 +27,9 @@ COMMON_PACKAGES=(
 echo "Installing common packages..."
 sudo apt install -y "${COMMON_PACKAGES[@]}"
 
-# Optional apt upgrade
-read -r -p "Do you want to upgrade existing packages? [Y/n] "
-if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-    echo "Upgrading existing packages..."
-    sudo apt upgrade -y
-else
-    echo "Skipping package upgrade."
-fi
+# Apt upgrade
+echo "Upgrading existing packages..."
+sudo apt upgrade -y
 
 # Zsh and Oh My zsh
 read -r -p "Do you want to install Zsh and Oh My Zsh? [Y/n] "
@@ -132,17 +127,50 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
                 exit 1
                 ;;
         esac
+
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
         brew install neovim
+
         brew install node@24
         echo "export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:\$PATH"" >> "$SHELL_RC"
+
+        export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:$PATH"
+        export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+        corepack enable
+        corepack prepare yarn@stable --activate
+
         brew install tree-sitter-cli
+
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate base
         pip install neovim
+
+        sudo apt install -y python3-venv
     )
     echo "Neovim installation complete."
 else
     echo "Skipping Neovim installation."
+fi
+
+# VSCode
+read -r -p "Do you want to install Visual Studio Code? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Setting up MS VSCode repository..."
+    sudo apt install -y gpg
+
+    # Import Microsoft GPG key
+    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
+    sudo install -D -o root -g root -m 644 microsoft.gpg /usr/share/keyrings/microsoft.gpg
+    rm -f microsoft.gpg
+
+    # Add VSCode repository
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list
+
+    echo "Installing Visual Studio Code..."
+    sudo apt update
+    sudo apt install -y code
+else
+    echo "Skipping Visual Studio Code installation."
 fi
 
