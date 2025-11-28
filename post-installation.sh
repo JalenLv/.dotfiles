@@ -20,6 +20,9 @@ COMMON_PACKAGES=(
     vim-gtk3
     htop
     build-essential
+    cmake
+    ninja-build
+    pkg-config
     unzip
     tar
     tmux
