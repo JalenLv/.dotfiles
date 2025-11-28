@@ -22,6 +22,7 @@ COMMON_PACKAGES=(
     build-essential
     unzip
     tar
+    tmux
     software-properties-common
 )
 echo "Installing common packages..."
@@ -175,5 +176,149 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
     sudo apt install -y code
 else
     echo "Skipping Visual Studio Code installation."
+fi
+
+# NoMachine
+read -r -p "Do you want to install NoMachine? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Installing NoMachine..."
+    case "$(uname -m)" in
+        x86_64)
+            URL="https://www.nomachine.com/free/linux/64/deb"
+            ;;
+        aarch64)
+            URL="https://www.nomachine.com/free/arm/v8/deb"
+            ;;
+        *)
+            echo "Unsupported architecture: $(uname -m)"
+            exit 1
+            ;;
+    esac
+    TMP=$(mktemp).deb
+    wget -O $TMP $URL
+    sudo apt install -y $TMP
+    rm -f $TMP
+else
+    echo "Skipping NoMachine installation."
+fi
+
+read -r -p "Do you want to install Rustdesk? [Y/n] "
+# Rustdesk
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Installing Rustdesk..."
+    TMP=$(mktemp).deb
+    URL=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | grep url | grep "$(uname -m)\.deb" | cut -d : -f 2,3 | tr -d \")
+    wget -O $TMP $(echo $URL)
+    sudo apt install -y $TMP
+    rm -f $TMP
+else
+    echo "Skipping Rustdesk installation."
+fi
+
+# Easytier
+read -r -p "Do you want to install Easytier CLI or GUI?\n 1 for CLI, 2 for GUI, any other key to skip: "
+if [[ $REPLY == "1" ]]; then
+    echo "Installing Easytier CLI..."
+    TMP=$(mktemp).zip
+    URL=$(curl -s https://api.github.com/repos/EasyTier/EasyTier/releases/latest | grep easytier-linux-$(uname -m) | grep url | cut -d : -f 2,3 | tr -d \")
+    wget -O $TMP $(echo $URL)
+    sudo unzip $TMP -d "/opt"
+    rm -f $TMP
+    sudo mv /opt/easytier-linux-$(uname -m) /opt/easytier
+    for FILE in /opt/easytier/*; do
+        sudo ln -s $FILE /usr/bin/$(basename $FILE) -v
+    done
+    sudo mkdir -p /opt/easytier/config
+    sudo tee /opt/easytier/config/default.conf > /dev/null << EOF
+instance_name = "default"
+dhcp = true
+listeners = [
+    "tcp://0.0.0.0:11010",
+    "udp://0.0.0.0:11010",
+    "wg://0.0.0.0:11011",
+    "ws://0.0.0.0:11011",
+    "wss://0.0.0.0:11012",
+]
+rpc_portal = "0.0.0.0:0"
+
+[[peer]]
+uri = "udp://to.be.filled:11010"
+
+[network_identity]
+network_name = "to_be_filled"
+network_secret = "to_be_filled"
+
+[flags]
+
+EOF
+    sudo tee /etc/systemd/system/easytier@.service > /dev/null << EOF
+[Unit]
+Description=EasyTier Service
+Wants=network.target
+After=network.target network.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/easytier
+ExecStart=/opt/easytier/easytier-core -c /opt/easytier/config/%i.conf
+Restart=always
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    echo "Easytier CLI installation complete. Remember to create your own config file based on /opt/easytier/config/default.conf and enable the service using:"
+    echo "  sudo systemctl enable --now easytier@<your_config.conf>"
+elif [[ $REPLY == "2" ]]; then
+    echo "Installing Easytier GUI..."
+    TMP=$(mktemp).deb
+    ARCH=$(uname -m)
+    if [[ "$ARCH" == "x86_64" ]]; then
+        ARCH="amd64"
+    elif [[ "$ARCH" == "aarch64" ]]; then
+        ARCH="arm64"
+    else
+        echo "Unsupported architecture: $ARCH"
+        exit 1
+    fi
+    URL=$(curl -s https://api.github.com/repos/EasyTier/EasyTier/releases/latest | grep easytier-gui | grep url | grep deb | grep $ARCH | cut -d : -f 2,3 | tr -d \")
+    wget -O $TMP $(echo $URL)
+    sudo apt install -y $TMP
+    rm -f $TMP
+else
+    echo "Skipping Easytier installation."
+fi
+
+# SSH Reverse Tunnel for ssh relay
+read -r -p "Do you want to set up an SSH reverse tunnel for SSH relay? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    sudo tee /etc/systemd/system/reverse-tunnel@.service > /dev/null << EOF
+[Unit]
+Description=Reverse SSH Tunnel on port %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=to_be_filled
+ExecStart=/usr/bin/ssh \\
+    -o ExitOnForwardFailure=yes \\
+    -o ServerAliveInterval=30 \\
+    -o ServerAliveCountMax=3 \\
+    -N -R 0.0.0.0:%i:localhost:22 \\
+    -i /to_be_filled/path/to/private_key to_be_filled@to_be_filled.relay.server.com
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    echo "SSH reverse tunnel service created. Remember to replace placeholders in /etc/systemd/system/reverse-tunnel@.service."
+    echo "You can enable and start the service using:"
+    echo "  sudo systemctl enable --now reverse-tunnel@<remote_port>"
+else
+    echo "Skipping SSH reverse tunnel setup."
 fi
 
