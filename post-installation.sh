@@ -36,11 +36,28 @@ else
     echo "Skipping package upgrade."
 fi
 
+# Zsh and Oh My zsh
+read -r -p "Do you want to install Zsh and Oh My Zsh? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    SHELL_NAME=$(basename "$SHELL")
+    if [[ "$SHELL_NAME" != "zsh" ]]; then
+        echo "Installing Zsh..."
+        sudo apt install -y zsh
+        chsh -s "$(which zsh)"
+        echo "Please log out and log back in to start using Zsh as your default shell."
+        exit 0
+    fi
+    echo "Installing Oh My Zsh..."
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+else
+    echo "Skipping Zsh and Oh My Zsh installation."
+fi
+
 # Miniconda
 read -r -p "Do you want to install Miniconda? [Y/n] "
 if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
     echo "Downloading Miniconda installer..."
-    TMP=$(mktemp)
+    TMP=$(mktemp).sh
     curl -o $TMP https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-$(uname -m).sh
 
     echo "Installing Miniconda at $HOME/miniconda3..."
@@ -105,6 +122,7 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         brew install neovim
         brew install node@24
+        export PATH="$(brew --prefix)/opt/node@24/bin:$PATH"
         brew install tree-sitter-cli
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate base
