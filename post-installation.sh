@@ -133,7 +133,10 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
         brew install neovim
 
         brew install node@24
-        echo "export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:\$PATH"" >> "$SHELL_RC"
+        {
+            echo "# Node.js"
+            echo "export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:\$PATH""
+        } >> "$SHELL_RC"
 
         export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:$PATH"
         export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
