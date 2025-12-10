@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # This script installs common packages.
-set -euxo pipefail
+set -euo pipefail
 
 # Check if apt is available
 if ! command -v apt &> /dev/null; then
@@ -20,21 +20,20 @@ COMMON_PACKAGES=(
     vim-gtk3
     htop
     build-essential
+    cmake
+    ninja-build
+    pkg-config
     unzip
     tar
+    tmux
     software-properties-common
 )
 echo "Installing common packages..."
 sudo apt install -y "${COMMON_PACKAGES[@]}"
 
-# Optional apt upgrade
-read -r -p "Do you want to upgrade existing packages? [Y/n] "
-if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-    echo "Upgrading existing packages..."
-    sudo apt upgrade -y
-else
-    echo "Skipping package upgrade."
-fi
+# Apt upgrade
+echo "Upgrading existing packages..."
+sudo apt upgrade -y
 
 # Zsh and Oh My zsh
 read -r -p "Do you want to install Zsh and Oh My Zsh? [Y/n] "
@@ -132,17 +131,228 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
                 exit 1
                 ;;
         esac
+
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
         brew install neovim
+
         brew install node@24
-        echo "export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:\$PATH"" >> "$SHELL_RC"
+        {
+            echo "# Node.js"
+            echo "export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:\$PATH""
+        } >> "$SHELL_RC"
+
+        export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:$PATH"
+        export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+        corepack enable
+        corepack prepare yarn@stable --activate
+
         brew install tree-sitter-cli
+
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate base
         pip install neovim
+
+        sudo apt install -y python3-venv
     )
     echo "Neovim installation complete."
 else
     echo "Skipping Neovim installation."
+fi
+
+# VSCode
+read -r -p "Do you want to install Visual Studio Code? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Setting up MS VSCode repository..."
+    sudo apt install -y gpg
+
+    # Import Microsoft GPG key
+    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
+    sudo install -D -o root -g root -m 644 microsoft.gpg /usr/share/keyrings/microsoft.gpg
+    rm -f microsoft.gpg
+
+    # Add VSCode repository
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list
+
+    echo "Installing Visual Studio Code..."
+    sudo apt update
+    sudo apt install -y code
+else
+    echo "Skipping Visual Studio Code installation."
+fi
+
+# Docker
+read -r -p "Do you want to install Docker? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Setting up Docker repository..."
+    # Add Docker's official GPG key:
+    sudo apt install -y ca-certificates
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+    # Add the repository to Apt sources:
+    sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+    sudo apt update
+
+    echo "Installing Docker..."
+    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+    echo "Adding user $USER to docker group..."
+    sudo groupadd docker || true
+    sudo usermod -aG docker $USER
+    newgrp docker
+else
+    echo "Skipping Docker installation."
+fi
+
+# NoMachine
+read -r -p "Do you want to install NoMachine? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Installing NoMachine..."
+    case "$(uname -m)" in
+        x86_64)
+            URL="https://www.nomachine.com/free/linux/64/deb"
+            ;;
+        aarch64)
+            URL="https://www.nomachine.com/free/arm/v8/deb"
+            ;;
+        *)
+            echo "Unsupported architecture: $(uname -m)"
+            exit 1
+            ;;
+    esac
+    TMP=$(mktemp).deb
+    wget -O $TMP $URL
+    sudo apt install -y $TMP
+    rm -f $TMP
+else
+    echo "Skipping NoMachine installation."
+fi
+
+read -r -p "Do you want to install Rustdesk? [Y/n] "
+# Rustdesk
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Installing Rustdesk..."
+    TMP=$(mktemp).deb
+    URL=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | grep url | grep "$(uname -m)\.deb" | cut -d : -f 2,3 | tr -d \")
+    wget -O $TMP $(echo $URL)
+    sudo apt install -y $TMP
+    rm -f $TMP
+else
+    echo "Skipping Rustdesk installation."
+fi
+
+# Easytier
+read -r -p "Do you want to install Easytier CLI or GUI?\n 1 for CLI, 2 for GUI, any other key to skip: "
+if [[ $REPLY == "1" ]]; then
+    echo "Installing Easytier CLI..."
+    TMP=$(mktemp).zip
+    URL=$(curl -s https://api.github.com/repos/EasyTier/EasyTier/releases/latest | grep easytier-linux-$(uname -m) | grep url | cut -d : -f 2,3 | tr -d \")
+    wget -O $TMP $(echo $URL)
+    sudo unzip $TMP -d "/opt"
+    rm -f $TMP
+    sudo mv /opt/easytier-linux-$(uname -m) /opt/easytier
+    for FILE in /opt/easytier/*; do
+        sudo ln -s $FILE /usr/bin/$(basename $FILE) -v
+    done
+    sudo mkdir -p /opt/easytier/config
+    sudo tee /opt/easytier/config/default.conf > /dev/null << EOF
+instance_name = "default"
+dhcp = true
+listeners = [
+    "tcp://0.0.0.0:11010",
+    "udp://0.0.0.0:11010",
+    "wg://0.0.0.0:11011",
+    "ws://0.0.0.0:11011",
+    "wss://0.0.0.0:11012",
+]
+rpc_portal = "0.0.0.0:0"
+
+[[peer]]
+uri = "udp://to.be.filled:11010"
+
+[network_identity]
+network_name = "to_be_filled"
+network_secret = "to_be_filled"
+
+[flags]
+
+EOF
+    sudo tee /etc/systemd/system/easytier@.service > /dev/null << EOF
+[Unit]
+Description=EasyTier Service
+Wants=network.target
+After=network.target network.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/easytier
+ExecStart=/opt/easytier/easytier-core -c /opt/easytier/config/%i.conf
+Restart=always
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    echo "Easytier CLI installation complete. Remember to create your own config file based on /opt/easytier/config/default.conf and enable the service using:"
+    echo "  sudo systemctl enable --now easytier@<your_config.conf>"
+elif [[ $REPLY == "2" ]]; then
+    echo "Installing Easytier GUI..."
+    TMP=$(mktemp).deb
+    ARCH=$(uname -m)
+    if [[ "$ARCH" == "x86_64" ]]; then
+        ARCH="amd64"
+    elif [[ "$ARCH" == "aarch64" ]]; then
+        ARCH="arm64"
+    else
+        echo "Unsupported architecture: $ARCH"
+        exit 1
+    fi
+    URL=$(curl -s https://api.github.com/repos/EasyTier/EasyTier/releases/latest | grep easytier-gui | grep url | grep deb | grep $ARCH | cut -d : -f 2,3 | tr -d \")
+    wget -O $TMP $(echo $URL)
+    sudo apt install -y $TMP
+    rm -f $TMP
+else
+    echo "Skipping Easytier installation."
+fi
+
+# SSH Reverse Tunnel for ssh relay
+read -r -p "Do you want to set up an SSH reverse tunnel for SSH relay? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    sudo tee /etc/systemd/system/reverse-tunnel@.service > /dev/null << EOF
+[Unit]
+Description=Reverse SSH Tunnel on port %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=to_be_filled
+ExecStart=/usr/bin/ssh \\
+    -o ExitOnForwardFailure=yes \\
+    -o ServerAliveInterval=30 \\
+    -o ServerAliveCountMax=3 \\
+    -N -R 0.0.0.0:%i:localhost:22 \\
+    -i /to_be_filled/path/to/private_key to_be_filled@to_be_filled.relay.server.com
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    echo "SSH reverse tunnel service created. Remember to replace placeholders in /etc/systemd/system/reverse-tunnel@.service."
+    echo "You can enable and start the service using:"
+    echo "  sudo systemctl enable --now reverse-tunnel@<remote_port>"
+else
+    echo "Skipping SSH reverse tunnel setup."
 fi
 
