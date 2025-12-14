@@ -52,6 +52,29 @@ else
     echo "Skipping Zsh and Oh My Zsh installation."
 fi
 
+# JetBrains Mono Nerd Font
+read -r -p "Do you want to install JetBrains Mono Nerd Font? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Installing JetBrains Mono Nerd Font..."
+
+    TMP=$(mktemp).zip
+    URL=$(curl -s https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest | grep -i jetbrain | grep url | grep zip | cut -d : -f 2,3 | tr -d \")
+    wget -O $TMP $(echo $URL)
+
+    FONT_DIR="$HOME/.local/share/fonts/JetBrainsMonoNerdFont"
+    mkdir -p "$FONT_DIR"
+    unzip -o $TMP -d "$FONT_DIR"
+    rm -f $TMP
+
+    echo "Updating font cache..."
+    fc-cache -f -v
+    sudo fc-cache -f -v
+
+    echo "JetBrains Mono Nerd Font installation complete."
+else
+    echo "Skipping JetBrains Mono Nerd Font installation."
+fi
+
 # Miniconda
 read -r -p "Do you want to install Miniconda? [Y/n] "
 if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
@@ -154,6 +177,13 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
         pip install neovim
 
         sudo apt install -y python3-venv
+        # If using wayland ($WAYLAND_DISPLAY is set), install wl-clipboard
+        # If using X11, install only xclip
+        if [[ -n "${WAYLAND_DISPLAY-}" ]]; then
+            sudo apt install -y wl-clipboard xclip
+        else
+            sudo apt install -y xclip
+        fi
     )
     echo "Neovim installation complete."
 else
