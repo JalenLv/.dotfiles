@@ -12,6 +12,9 @@ fi
 echo "Updating package lists..."
 sudo apt update
 
+# Ubuntu or Debian?
+os=$(grep '^ID=' /etc/os-release | cut -d= -f2- | tr -d '"')
+
 # Install common packages
 COMMON_PACKAGES=(
     git
@@ -26,8 +29,10 @@ COMMON_PACKAGES=(
     unzip
     tar
     tmux
-    software-properties-common
 )
+if [[ "$os" == "ubuntu" ]]; then
+    COMMON_PACKAGES+=(software-properties-common)
+fi
 echo "Installing common packages..."
 sudo apt install -y "${COMMON_PACKAGES[@]}"
 
@@ -214,6 +219,10 @@ fi
 # Docker
 read -r -p "Do you want to install Docker? [Y/n] "
 if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    # Remove old versions of Docker if they exist
+    echo "Removing old versions of Docker if they exist..."
+    sudo apt remove $(dpkg --get-selections docker.io docker-compose docker-compose-v2 docker-doc podman-docker containerd runc | cut -f1)
+
     echo "Setting up Docker repository..."
     # Add Docker's official GPG key:
     sudo apt install -y ca-certificates
@@ -222,13 +231,26 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
     sudo chmod a+r /etc/apt/keyrings/docker.asc
 
     # Add the repository to Apt sources:
-    sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+    if [[ "$os" == "ubuntu" ]]; then
+        sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
 Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
 Components: stable
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
+    elif [[ "$os" == "debian" ]]; then
+        sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/debian
+Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
+Components: stable
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+    else
+        echo "Unsupported OS: $os"
+        exit 1
+    fi
     sudo apt update
 
     echo "Installing Docker..."
@@ -280,7 +302,8 @@ else
 fi
 
 # Easytier
-read -r -p "Do you want to install Easytier CLI or GUI?\n 1 for CLI, 2 for GUI, any other key to skip: "
+echo "Do you want to install Easytier CLI or GUI?"
+read -r -p "1 for CLI, 2 for GUI, any other key to skip: "
 if [[ $REPLY == "1" ]]; then
     echo "Installing Easytier CLI..."
     TMP=$(mktemp).zip
