@@ -1,0 +1,209 @@
+" .ideavimrc is a configuration file for IdeaVim plugin. It uses
+"   the same commands as the original .vimrc configuration.
+" You can find a list of commands here: https://jb.gg/h38q75
+" Find more examples here: https://jb.gg/share-ideavimrc
+
+" --- Enable IdeaVim plugins https://jb.gg/ideavim-plugins
+
+" ---------- Settings ---------- "
+" set leader to space
+let mapleader = " "
+let g:mapleader = " "
+let g:maplocalleader = " "
+
+" Show line numbers.
+set number
+
+set ignorecase
+set smartcase
+set incsearch
+set hlsearch
+nmap <silent> <Esc> :nohlsearch<CR>
+
+set scrolloff=1
+
+set notimeout
+
+set clipboard=unnamedplus
+
+" ---------- Key mappings ---------- "
+" map ctrl+a to select all
+nnoremap <C-a> ggVG<C-o>
+
+" quicker window movement
+nnoremap <C-j> <C-w>j
+nnoremap <C-k> <C-w>k
+nnoremap <C-h> <C-w>h
+nnoremap <C-l> <C-w>l
+
+" Jump to start and end of line using the home row keys
+map H ^
+map L $
+
+" Search results centered please
+nnoremap <silent> n nzz
+nnoremap <silent> N Nzz
+nnoremap <silent> * *zz
+nnoremap <silent> # #zz
+nnoremap <silent> g* g*zz
+nnoremap <C-o> <C-o>zz
+nnoremap <C-i> <C-i>zz
+
+" IDE related
+nmap <leader>zz <Action>(ToggleZenMode)
+  let g:WhichKeyDesc_zen_prefix="<leader>z [Z]en mode"
+  let g:WhichKeyDesc_zen="<leader>zz Toggle [Z]en mode"
+nmap <leader>ff <Action>(ReformatCode)
+vmap <leader>ff <Action>(ReformatCode)
+  let g:WhichKeyDesc_format_prefix="<leader>f [F]ormat Code"
+  let g:WhichKeyDesc_format="<leader>ff [F]ormat Code"
+nmap <leader>dd <Action>(Debug)
+nmap <leader>db <Action>(ToggleLineBreakpoint)
+  let g:WhichKeyDesc_debug_prefix="<leader>d [D]ebug options"
+  let g:WhichKeyDesc_debug_debug="<leader>dd [D]ebug"
+  let g:WhichKeyDesc_debug_breakpoint="<leader>db Toggle [D]ebug [B]reakpoint"
+nmap <leader>ll <Action>(Run)
+nmap <leader>lb <Action>(Build)
+  let g:WhichKeyDesc_run_prefix="<leader>l [L]aunch"
+  let g:WhichKeyDesc_run_run="<leader>ll Run"
+  let g:WhichKeyDesc_run_build="<leader>lb [B]uild"
+nmap K <Action>(ShowHoverInfo)
+nmap ]e <Action>(GotoNextError)
+nmap [e <Action>(GotoPreviousError)
+  let g:WhichKeyDesc_error_next="]e [N]ext [E]rror"
+  let g:WhichKeyDesc_error_prev="[e [P]revious [E]rror"
+nmap gd <Action>(GotoImplementation)
+nmap gD <Action>(GotoDeclaration)
+" Use 'F3' and 'Shift+F3' to navigate between usages
+nmap gu <Action>(FindUsagesInFile)
+  let g:WhichKeyDesc_goto_prefix="g [G]oto"
+  let g:WhichKeyDesc_goto_definition="gd [G]oto [d]efinition"
+  let g:WhichKeyDesc_goto_declaration="gd [G]oto [D]eclaration"
+  let g:WhichKeyDesc_goto_usage="gd [G]oto [U]sage"
+nmap <leader>su <Action>(FindUsages)
+nmap <leader>sc <Action>(GotoClass)
+nmap <leader>sf <Action>(GotoFile)
+nmap <leader>ss <Action>(GotoSymbol)
+nmap <leader>st <Action>(TextSearchAction)
+nmap <leader>sb <Action>(RecentFiles)
+nmap <leader>sa <Action>(GotoAction)
+nmap <leader>s/ <Action>(TodoMainGroup)
+" Use built 'Shift+Shift' to search everything everywhere
+  let g:WhichKeyDesc_search_prefix="<leader>s [S]earch"
+  let g:WhichKeyDesc_search_class="<leader>sc [S]earch [C]lass"
+  let g:WhichKeyDesc_search_file="<leader>sf [S]earch [F]ile"
+  let g:WhichKeyDesc_search_symbol="<leader>ss [S]earch [S]ymbol"
+  let g:WhichKeyDesc_search_text="<leader>st [S]earch [T]ext"
+  let g:WhichKeyDesc_search_buffer="<leader>sb [S]earch [B]uffer"
+  let g:WhichKeyDesc_search_action="<leader>sa [S]earch [A]ction"
+  let g:WhichKeyDesc_search_current_buffer="<leader>s/ [S]earch [/]urrent buffer"
+nmap <leader>rn <Action>(RenameElement)
+nmap <leader>rs <Action>(ChangeSignature)
+  let g:WhichKeyDesc_refactor_prefix="<leader>r [R]efactor"
+  let g:WhichKeyDesc_refactor_name="<leader>rn [R]efactor [N]ame"
+  let g:WhichKeyDesc_refactor_signature="<leader>rs [R]efactor [S]ignature"
+nmap <C-w> v<Action>(EditorSelectWord)
+vmap <C-w> <Action>(EditorSelectWord)
+vmap <C-S-w> <Action>(EditorUnSelectWord)
+
+" Buffer navigation
+nnoremap <leader>bn :bnext<CR>
+nnoremap <leader>bp :bprev<CR>
+nnoremap <leader>bd :bd<CR>
+  let g:WhichKeyDesc_buffer_prefix="<leader>b [B]uffer"
+  let g:WhichKeyDesc_buffer_next="<leader>bn [B]uffer [N]ext"
+  let g:WhichKeyDesc_buffer_prev="<leader>bp [B]uffer [P]revious"
+  let g:WhichKeyDesc_buffer_delete="<leader>bd [B]uffer [D]elete"
+nnoremap ]b :bnext<CR>
+nnoremap [b :bprev<CR>
+  let g:WhichKeyDesc_next="] [N]ext"
+  let g:WhichKeyDesc_prev="[ [P]revious"
+  let g:WhichKeyDesc_buffer_next="]b [N]ext [B]uffer"
+  let g:WhichKeyDesc_buffer_prev="[b [P]revious [B]uffer"
+
+" ---------- Plugins ---------- "
+set highlightedyank
+let g:highlightedyank_highlight_color = "rgba(255, 185, 100, 155)"
+
+" This plugin provides a text-object 'a' (argument). You can
+" d(elete), c(hange), v(select)... an argument or inner argument in familiar ways.
+" e.g., 'dia' [d]eletes an [i]nner [a]rgument, 'cia' [c]hanges an [i]nner [a]rgument.
+set argtextobj
+
+" Use '{' and '}' to move between paragraphs
+set vim-paragraph-motion
+
+" Use 'gc' to comment out a line or a visual selection
+set commentary
+
+" Use 'cx' to exchange two text objects
+" 'X' for visual mode
+" 'cxc' to clear pending exchange
+set exchange
+
+" 'cs' to change surrounding; 'ds' to delete surrounding
+" 'ys' to add surrounding; 'yss' to add surrounding to the whole line
+" Opening brackets add a space, closing brackets do not
+" Provides text objects for surrounding pairs: 'b' and 'B'
+set surround
+  let g:WhichKeyDesc_surround_add_prefix="y Add [S]urround Prefix"
+  let g:WhichKeyDesc_surround_change_prefix="c [C]hange [S]urround Prefix"
+  let g:WhichKeyDesc_surround_delete_prefix="d [D]elete [S]urround Prefix"
+  let g:WhichKeyDesc_surround_add="ys Add [S]urround"
+  let g:WhichKeyDesc_surround_add_line="yss Add [S]urround line"
+  let g:WhichKeyDesc_surround_change="cs [C]hange [S]urround"
+  let g:WhichKeyDesc_surround_delete="ds [D]elete [S]urround"
+  " ----- IDE related ----- "
+  vmap <leader>ysw <Action>(SurroundWith)
+  vmap <leader>dsw <Action>(Unwrap)
+  let g:WhichKeyDesc_surround_wrapper="<leader>ysw Add [S]urround [W]rapper"
+  let g:WhichKeyDesc_surround_unwrap="<leader>dsw [D]elete [S]urround [W]rapper"
+
+set NERDTree
+nnoremap <leader>tt :NERDTreeToggle<CR>
+nnoremap <leader>tf :NERDTreeFocus<CR>
+  let g:WhichKeyDesc_nerdtree_prefix="<leader>t [T]ree"
+  let g:WhichKeyDesc_nerdtree_toggle="<leader>tt [T]oggle [T]ree"
+  let g:WhichKeyDesc_nerdtree_focus="<leader>tf [T]oggle [F]ocus"
+
+" ???
+set multiple-cursors
+
+set ReplaceWithRegister
+  let g:WhichKeyDesc_replace_prefix="gr [R]eplace"
+  let g:WhichKeyDesc_replace_with_register="grr [R]eplace line"
+
+set easymotion
+map <leader>ms <Plug>(easymotion-s2)
+map <leader>mt <Plug>(easymotion-t2)
+map <leader>mf <Plug>(easymotion-f2)
+map <leader>mF <Plug>(easymotion-F2)
+map <leader>mt <Plug>(easymotion-t2)
+map <leader>mT <Plug>(easymotion-T2)
+map <leader>m/ <Plug>(easymotion-sn)
+  let g:WhichKeyDesc_easymotion_default_prefix="<leader><leader> default Easymotion prefix"
+  let g:WhichKeyDesc_easymotion_custom_prefix="<leader>m custom Easy[M]otion prefix"
+  let g:WhichKeyDesc_easymotion_s2="<leader>ms Easy[M]otion 2-character [S]earch"
+  let g:WhichKeyDesc_easymotion_t2="<leader>mt Easy[M]otion 2-character [T]ill"
+  let g:WhichKeyDesc_easymotion_f2="<leader>mf Easy[M]otion 2-character [F]ind"
+  let g:WhichKeyDesc_easymotion_F2="<leader>mF Easy[M]otion 2-character [F]ind"
+  let g:WhichKeyDesc_easymotion_t2="<leader>mt Easy[M]otion 2-character [T]ill"
+  let g:WhichKeyDesc_easymotion_T2="<leader>mT Easy[M]otion 2-character [T]ill"
+  let g:WhichKeyDesc_easymotion_sn="<leader>m/ Easy[M]otion n-character [S]earch"
+
+
+" Add text objects for indentation levels: 'ai', 'ii', 'aI'
+" 'ai': [A]n [I]ndentation level and line above
+" 'ii': [I]nner [I]ndentation level (no line above)
+" 'aI': [A]n [I]ndentation level and lines above/below
+set textobj-indent
+
+" ???
+set matchit
+
+" An always-on highlight for a unique character in every word on a line
+" to help you use 'f', 'F' and family.
+set quickscope
+
+set which-key
+let g:WhichKey_DefaultDelay=300
