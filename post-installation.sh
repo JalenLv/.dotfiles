@@ -18,7 +18,7 @@ COLOR_RED='\033[0;31m'
 COLOR_BOLD='\033[1m'
 
 # Global variable to track TUI mode
-TUI_MODE=""
+TUI_MODE="enhanced_read"  # Default to enhanced read, will switch to whiptail if available
 
 # Ensure TUI is available (whiptail first, try install, then fallback)
 ensure_tui_available() {
@@ -29,7 +29,7 @@ ensure_tui_available() {
     
     # Try to install whiptail
     echo "whiptail not found. Attempting to install..."
-    if sudo apt install -y whiptail &> /dev/null; then
+    if sudo apt install -y whiptail; then
         TUI_MODE="whiptail"
         echo "whiptail installed successfully."
         return 0
@@ -41,27 +41,13 @@ ensure_tui_available() {
     return 0
 }
 
-# Show a message box
-show_message() {
-    local title="$1"
-    local message="$2"
-    
-    if [[ "$TUI_MODE" == "whiptail" ]]; then
-        whiptail --title "$title" --msgbox "$message" 20 70
-    else
-        echo -e "${COLOR_CYAN}${COLOR_BOLD}=== $title ===${COLOR_RESET}"
-        echo -e "$message"
-        echo ""
-    fi
-}
-
 # Show a yes/no dialog
 show_yesno() {
     local title="$1"
     local message="$2"
     
     if [[ "$TUI_MODE" == "whiptail" ]]; then
-        whiptail --title "$title" --yesno "$message" 20 70
+        whiptail --title "$title" --yesno "$message" 0 0
         return $?
     else
         echo -e "${COLOR_CYAN}${COLOR_BOLD}=== $title ===${COLOR_RESET}"
@@ -88,7 +74,7 @@ is_jetbrains_font_installed() {
 }
 
 is_homebrew_installed() {
-    command -v brew &> /dev/null
+    command -v brew &> /dev/null || [ -d "/home/linuxbrew/.linuxbrew" ]
 }
 
 is_miniconda_installed() {
@@ -100,7 +86,7 @@ is_neovim_installed() {
 }
 
 is_vscode_installed() {
-    command -v code &> /dev/null
+    dpkg -l code 2>/dev/null | grep -q '^ii'
 }
 
 is_docker_installed() {
@@ -108,7 +94,7 @@ is_docker_installed() {
 }
 
 is_nomachine_installed() {
-    dpkg -l 2>/dev/null | grep -q nomachine
+    dpkg -l nomachine 2>/dev/null | grep -q '^ii'
 }
 
 is_rustdesk_installed() {
@@ -120,7 +106,7 @@ is_easytier_cli_installed() {
 }
 
 is_easytier_gui_installed() {
-    dpkg -l 2>/dev/null | grep -q easytier-gui
+    dpkg -l easytier-gui 2>/dev/null | grep -q '^ii'
 }
 
 is_ssh_tunnel_service_installed() {
@@ -296,9 +282,15 @@ install_neovim() {
         
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate base
+
+        conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+        conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+        conda install -y -q python=3.13
+
         pip install neovim
         
         sudo apt install -y python3-venv
+
         # If using wayland ($WAYLAND_DISPLAY is set), install wl-clipboard
         # If using X11, install only xclip
         if [[ -n "${WAYLAND_DISPLAY-}" ]]; then
@@ -522,7 +514,8 @@ declare -a COMPONENTS=(
     "docker"
     "nomachine"
     "rustdesk"
-    "easytier"
+    "easytier_cli"
+    "easytier_gui"
     "ssh_tunnel"
 )
 
@@ -536,7 +529,8 @@ declare -A COMP_NAMES=(
     ["docker"]="Docker"
     ["nomachine"]="NoMachine Remote Desktop"
     ["rustdesk"]="RustDesk Remote Desktop"
-    ["easytier"]="EasyTier VPN (CLI or GUI)"
+    ["easytier_cli"]="EasyTier VPN (CLI)"
+    ["easytier_gui"]="EasyTier VPN (GUI)"
     ["ssh_tunnel"]="SSH Reverse Tunnel Service Template"
 )
 
@@ -550,7 +544,8 @@ declare -A COMP_DETECT=(
     ["docker"]="is_docker_installed"
     ["nomachine"]="is_nomachine_installed"
     ["rustdesk"]="is_rustdesk_installed"
-    ["easytier"]="detect_easytier_installed"
+    ["easytier_cli"]="is_easytier_cli_installed"
+    ["easytier_gui"]="is_easytier_gui_installed"
     ["ssh_tunnel"]="is_ssh_tunnel_service_installed"
 )
 
@@ -564,55 +559,10 @@ declare -A COMP_INSTALL=(
     ["docker"]="install_docker"
     ["nomachine"]="install_nomachine"
     ["rustdesk"]="install_rustdesk"
-    ["easytier"]="handle_easytier_installation"
+    ["easytier_cli"]="install_easytier_cli"
+    ["easytier_gui"]="install_easytier_gui"
     ["ssh_tunnel"]="install_ssh_tunnel_service"
 )
-
-# Special detection for easytier (either CLI or GUI)
-detect_easytier_installed() {
-    is_easytier_cli_installed || is_easytier_gui_installed
-}
-
-# Handle easytier selection (CLI vs GUI)
-handle_easytier_installation() {
-    if [[ "$TUI_MODE" == "whiptail" ]]; then
-        local choice
-        choice=$(whiptail --title "EasyTier Installation" --menu "Choose EasyTier variant:" 15 60 2 \
-            "1" "EasyTier CLI" \
-            "2" "EasyTier GUI" \
-            3>&1 1>&2 2>&3)
-        
-        case $choice in
-            1)
-                install_easytier_cli
-                ;;
-            2)
-                install_easytier_gui
-                ;;
-            *)
-                echo "EasyTier installation cancelled."
-                ;;
-        esac
-    else
-        echo -e "${COLOR_CYAN}${COLOR_BOLD}=== EasyTier Installation ===${COLOR_RESET}"
-        echo "Choose EasyTier variant:"
-        echo "  1) EasyTier CLI"
-        echo "  2) EasyTier GUI"
-        read -r -p "Enter choice [1/2]: " choice
-        
-        case $choice in
-            1)
-                install_easytier_cli
-                ;;
-            2)
-                install_easytier_gui
-                ;;
-            *)
-                echo "EasyTier installation cancelled."
-                ;;
-        esac
-    fi
-}
 
 # Build and show component selection menu
 show_component_menu() {
@@ -627,7 +577,7 @@ show_component_menu() {
             
             if $detect_func; then
                 # Installed - show with tag, default OFF
-                menu_args+=("$comp" "$name [INSTALLED]" "OFF")
+                menu_args+=("$comp" "[INSTALLED] $name" "OFF")
             else
                 # Not installed - default ON
                 menu_args+=("$comp" "$name" "ON")
@@ -638,46 +588,57 @@ show_component_menu() {
         local result
         result=$(whiptail --title "Component Installation" \
             --checklist "Select components to install (Space to toggle, Enter to confirm):" \
-            25 80 15 \
-            "${menu_args[@]}" \
+            0 0 0 "${menu_args[@]}" \
             3>&1 1>&2 2>&3)
         
         # Parse result
         if [ $? -eq 0 ]; then
             # Remove quotes and convert to array
             result=$(echo "$result" | tr -d '"')
-            IFS=' ' read -ra selected_components <<< "$result"
+            selected_components=($result)
         fi
     else
         # Enhanced read mode
-        echo -e "${COLOR_CYAN}${COLOR_BOLD}"
-        echo "================================================================================"
-        echo "                    Component Installation Menu"
-        echo "================================================================================"
-        echo -e "${COLOR_RESET}"
-        
+        # All interactive UI goes to stderr (>&2) so it's not captured by command substitution
+        # Only the final result goes to stdout
         local -a toggle_status=()
-        local idx=0
         
         # Initialize toggle status
         for comp in "${COMPONENTS[@]}"; do
             local detect_func="${COMP_DETECT[$comp]}"
             if $detect_func; then
-                toggle_status[$idx]=0  # Installed, default off
+                toggle_status+=(0)  # Installed, default off
             else
-                toggle_status[$idx]=1  # Not installed, default on
+                toggle_status+=(1)  # Not installed, default on
             fi
-            ((idx++))
         done
         
         # Display menu
         while true; do
-            echo ""
+            # Clear screen for clean display
+            clear >&2
+            
+            echo -e "${COLOR_CYAN}${COLOR_BOLD}" >&2
+            echo "================================================================================" >&2
+            echo "                    Component Installation Menu" >&2
+            echo "================================================================================" >&2
+            echo -e "${COLOR_RESET}" >&2
+            echo "" >&2
+
+            # Count selected items
+            local selected_count=0
+            for status in "${toggle_status[@]}"; do
+                if [ $status -eq 1 ]; then
+                    selected_count=$((selected_count + 1))
+                fi
+            done
+
             idx=0
             for comp in "${COMPONENTS[@]}"; do
                 local detect_func="${COMP_DETECT[$comp]}"
                 local name="${COMP_NAMES[$comp]}"
                 local status_marker=""
+                local num_display=$(printf "%2d" $((idx+1)))
                 
                 if $detect_func; then
                     # Installed
@@ -686,7 +647,7 @@ show_component_menu() {
                     else
                         status_marker="[ ]"
                     fi
-                    echo -e " $((idx+1)). $status_marker $name ${COLOR_GREEN}[INSTALLED]${COLOR_RESET}"
+                    echo -e " ${num_display}. $status_marker $name ${COLOR_GREEN}✓ INSTALLED${COLOR_RESET}" >&2
                 else
                     # Not installed
                     if [ ${toggle_status[$idx]} -eq 1 ]; then
@@ -694,14 +655,22 @@ show_component_menu() {
                     else
                         status_marker="[ ]"
                     fi
-                    echo -e " $((idx+1)). $status_marker $name"
+                    echo -e " ${num_display}. $status_marker $name" >&2
                 fi
-                ((idx++))
+                idx=$((idx + 1))
             done
             
-            echo ""
-            echo -e "${COLOR_CYAN}Enter numbers to toggle (space-separated), 'a' for all, 'n' for none, or Enter to continue:${COLOR_RESET}"
-            read -r input
+            echo "" >&2
+            echo -e "${COLOR_CYAN}${COLOR_BOLD}Selected: $selected_count component(s)${COLOR_RESET}" >&2
+            echo "" >&2
+            echo -e "${COLOR_CYAN}Commands:${COLOR_RESET}" >&2
+            echo "  - Enter numbers to toggle (space-separated, e.g., '1 3 5')" >&2
+            echo "  - 'A' to select all" >&2
+            echo "  - 'N' to select none" >&2
+            echo -e "  - Press ${COLOR_BOLD}Enter${COLOR_RESET} to continue with selected items" >&2
+            echo "" >&2
+            echo -n "Your choice: " >&2
+            read -r input </dev/tty
             
             # If empty, break and proceed
             if [[ -z "$input" ]]; then
@@ -709,12 +678,12 @@ show_component_menu() {
             fi
             
             # Handle special commands
-            if [[ "$input" == "a" ]]; then
+            if [[ "$input" == "a" ]] || [[ "$input" == "A" ]]; then
                 for i in "${!toggle_status[@]}"; do
                     toggle_status[$i]=1
                 done
                 continue
-            elif [[ "$input" == "n" ]]; then
+            elif [[ "$input" == "n" ]] || [[ "$input" == "N" ]]; then
                 for i in "${!toggle_status[@]}"; do
                     toggle_status[$i]=0
                 done
@@ -742,7 +711,7 @@ show_component_menu() {
             if [ ${toggle_status[$idx]} -eq 1 ]; then
                 selected_components+=("$comp")
             fi
-            ((idx++))
+            idx=$((idx + 1))
         done
     fi
     
@@ -767,8 +736,12 @@ main() {
     echo ""
     
     # Update package lists
-    echo "Updating package lists..."
+    echo "Updating package lists... (also grant sudo permissions upfront)"
     sudo apt update
+
+    # Ensure TUI is available
+    echo ""
+    ensure_tui_available
     
     # Install common packages first
     echo ""
@@ -777,10 +750,6 @@ main() {
     else
         echo "Skipping common packages installation."
     fi
-    
-    # Ensure TUI is available
-    echo ""
-    ensure_tui_available
     
     # Show component selection menu
     echo ""
@@ -794,16 +763,14 @@ main() {
         exit 0
     fi
     
-    # Display selected components
-    echo ""
-    echo -e "${COLOR_CYAN}${COLOR_BOLD}Selected components for installation:${COLOR_RESET}"
-    for comp in "${selected_components[@]}"; do
-        echo "  - ${COMP_NAMES[$comp]}"
-    done
-    echo ""
-    
     # Confirm installation
-    if ! show_yesno "Confirm Installation" "Proceed with installation of selected components?"; then
+    local confirm_message=""
+    confirm_message+="The following components will be installed:\n\n"
+    for comp in "${selected_components[@]}"; do
+        confirm_message+="- ${COMP_NAMES[$comp]}\n"
+    done
+    confirm_message+="\nDo you want to proceed with the installation?"
+    if ! show_yesno "Confirm Installation" "$confirm_message"; then
         echo "Installation cancelled."
         exit 0
     fi
