@@ -122,7 +122,6 @@ install_common_packages() {
         git
         curl
         wget
-        vim-gtk3
         htop
         build-essential
         cmake
@@ -134,6 +133,12 @@ install_common_packages() {
     )
     if [[ "$os" == "ubuntu" ]]; then
         COMMON_PACKAGES+=(software-properties-common)
+    fi
+    # If there is desktop environment install vim-gtk3 else isntall vim
+    if [[ -n "${XDG_CURRENT_DESKTOP-}" ]] || [[ -n "${GDMSESSION-}" ]]; then
+        COMMON_PACKAGES+=(vim-gtk3)
+    else
+        COMMON_PACKAGES+=(vim)
     fi
     echo "Installing common packages..."
     sudo apt install -y "${COMMON_PACKAGES[@]}"
