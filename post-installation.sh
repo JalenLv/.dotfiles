@@ -259,7 +259,6 @@ EOF
     echo "Adding user $USER to docker group..."
     sudo groupadd docker || true
     sudo usermod -aG docker $USER
-    newgrp docker
 else
     echo "Skipping Docker installation."
 fi
