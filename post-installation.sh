@@ -80,24 +80,6 @@ else
     echo "Skipping JetBrains Mono Nerd Font installation."
 fi
 
-# Miniconda
-read -r -p "Do you want to install Miniconda? [Y/n] "
-if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-    echo "Downloading Miniconda installer..."
-    TMP=$(mktemp).sh
-    curl -o $TMP https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-$(uname -m).sh
-
-    echo "Installing Miniconda at $HOME/miniconda3..."
-    bash $TMP -b -p "$HOME/miniconda3"
-
-    rm -f $TMP
-
-    echo "Initializing Miniconda..."
-    "$HOME/miniconda3/bin/conda" init $(basename "$SHELL")
-else
-    echo "Skipping Miniconda installation."
-fi
-
 # Homebrew
 read -r -p "Do you want to install Homebrew? [Y/n] "
 if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
@@ -137,6 +119,24 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
     } >> "$SHELL_RC"
 else
     echo "Skipping Homebrew installation."
+fi
+
+# Miniconda
+read -r -p "Do you want to install Miniconda? [Y/n] "
+if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+    echo "Downloading Miniconda installer..."
+    TMP=$(mktemp).sh
+    curl -o $TMP https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-$(uname -m).sh
+
+    echo "Installing Miniconda at $HOME/miniconda3..."
+    bash $TMP -b -p "$HOME/miniconda3"
+
+    rm -f $TMP
+
+    echo "Initializing Miniconda..."
+    "$HOME/miniconda3/bin/conda" init $(basename "$SHELL")
+else
+    echo "Skipping Miniconda installation."
 fi
 
 # Neovim from Homebrew
