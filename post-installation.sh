@@ -458,6 +458,10 @@ EOF
 }
 
 install_easytier_gui() {
+    echo "Easytier GUI requires pkexec for privilege escalation. Installing pkexec..."
+    sudo apt update
+    sudo apt install -y pkexec
+
     echo "Installing Easytier GUI..."
     TMP=$(mktemp).deb
     ARCH=$(uname -m)
