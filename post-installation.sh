@@ -398,6 +398,13 @@ install_rustdesk() {
     sudo apt install -y $TMP
     rm -f $TMP
     echo "Rustdesk installation complete."
+
+    # If debian, create ldconfig file for Rustdesk since it doesn't come with one and the library won't be found.
+    if [[ "$os" == "debian" ]]; then
+        echo "Rustdesk on Debian is missing a ldconfig file, creating one..."
+        echo "/usr/share/rustdesk/lib" | sudo tee /etc/ld.so.conf.d/rustdesk.conf > /dev/null
+        sudo ldconfig
+    fi
 }
 
 install_easytier_cli() {
