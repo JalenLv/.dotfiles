@@ -294,7 +294,7 @@ install_neovim() {
 
         pip install neovim
         
-        sudo apt install -y python3-venv
+        sudo apt install -y python3-venv ripgrep fzf fd-find
 
         # If using wayland ($WAYLAND_DISPLAY is set), install wl-clipboard
         # If using X11, install only xclip
