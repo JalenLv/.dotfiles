@@ -200,6 +200,10 @@ autocmd BufRead *.md set filetype=markdown
 autocmd BufRead *.tex set filetype=tex
 autocmd BufRead *.rss set filetype=xml
 
+" Keybinds to enable/disable github copilot
+nnoremap <leader>cd :Copilot disable<CR>:Copilot status<CR>
+nnoremap <leader>ce :Copilot enable<CR>:Copilot status<CR>
+
 " set ultisnips
 " let g:UltiSnipsExpandTrigger = '<tab>'
 " let g:UltiSnipsJumpForwardTrigger = '<tab>'
