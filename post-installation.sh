@@ -207,13 +207,26 @@ install_homebrew() {
             ;;
     esac
     {
+        local shell_comp_string=""
+        if [ "$SHELL_NAME" == "zsh" ]; then
+            shell_comp_string="$(printf '%s\n' \
+                '    autoload -Uz compinit' \
+                '    compinit')"
+        elif [ "$SHELL_NAME" == "bash" ]; then
+            shell_comp_string="$(printf '%s\n' \
+                '    if [[ -r "/home/linuxbrew/.linuxbrew/etc/profile.d/bash_completion.sh" ]]; then' \
+                '        source "/home/linuxbrew/.linuxbrew/etc/profile.d/bash_completion.sh"' \
+                '    else' \
+                '        for COMPLETION in "/home/linuxbrew/.linuxbrew/etc/bash_completion.d/"*; do' \
+                '            [[ -r "${COMPLETION}" ]] && source "${COMPLETION}"' \
+                '        done' \
+                '    fi')"
+        fi
         echo ""
         echo "# Homebrew"
         echo "eval \"\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\""
         echo "if type brew &>/dev/null; then"
-        echo "    FPATH=\$(brew --prefix)/share/\$SHELL_NAME-completions:\$FPATH"
-        echo "    autoload -Uz compinit"
-        echo "    compinit"
+        echo "$shell_comp_string"
         echo "fi"
         echo ""
     } >> "$SHELL_RC"
