@@ -3,5 +3,9 @@ alias l="ls -lh"
 alias ll="ls -Alh"
 alias c="clear"
 alias cls="c && l"
-_tmux_bin="$(which tmux)"
-alias tmux='PATH="" $_tmux_bin'
+if [[ -z ${_tmux_bin-} || ! -x $_tmux_bin ]]; then
+    _tmux_bin="$(command -v tmux)"
+fi
+if [[ -n $_tmux_bin && -x $_tmux_bin ]]; then
+    alias tmux='PATH="" $_tmux_bin'
+fi
