@@ -1,8 +1,12 @@
-alias ls="ls --color=always"
+alias ls="ls --color=auto"
+alias la="ls -A"
 alias l="ls -lh"
 alias ll="ls -Alh"
 alias c="clear"
-alias cls="c && l"
+alias cls="c && ls"
+alias cla="c && la"
+alias cl="c && l"
+alias cll="c && ll"
 if [[ -z ${_tmux_bin-} || ! -x $_tmux_bin ]]; then
     _tmux_bin="$(command -v tmux)"
 fi
