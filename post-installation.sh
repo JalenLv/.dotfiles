@@ -47,10 +47,13 @@ show_yesno() {
 # Component Detection Functions
 # ============================================================================
 
-# True inside a desktop session. Over SSH this is false even on a desktop
-# machine, so only use it for defaults, never to block anything.
+# True when this machine has a desktop: a desktop session is running, or one is
+# installed, which also holds over SSH. A server has neither. Only use it for
+# defaults, never to block anything.
 has_desktop() {
-    [[ -n "${XDG_CURRENT_DESKTOP-}" ]] || [[ -n "${GDMSESSION-}" ]]
+    [[ -n "${XDG_CURRENT_DESKTOP-}" ]] || [[ -n "${GDMSESSION-}" ]] ||
+        compgen -G "/usr/share/xsessions/*.desktop" > /dev/null ||
+        compgen -G "/usr/share/wayland-sessions/*.desktop" > /dev/null
 }
 
 # Which desktop fcitx5 should be set up for: gnome, kde or other
@@ -179,6 +182,13 @@ is_ssh_tunnel_service_installed() {
 RIME_DIR="$HOME/.local/share/fcitx5/rime"
 RIME_GRAMMAR_MODEL="$RIME_DIR/wanxiang-lts-zh-hans.gram"
 
+# Label of the block patch_rime_ice writes, as "<package>:<recipe>"
+RIME_TWEAKS_ID="JalenLv/.dotfiles:rime-tweaks"
+
+is_rime_tweaks_applied() {
+    grep -Fqs "# Rx: $RIME_TWEAKS_ID:" "$RIME_DIR/rime_ice.custom.yaml"
+}
+
 # The grammar model is an option, so it does not count here. The menu label
 # says when it is missing (see installed_label).
 is_chinese_input_installed() {
@@ -294,8 +304,10 @@ install_jetbrains_font() {
     rm -f $TMP
     
     echo "Updating font cache..."
-    fc-cache -f -v
-    sudo fc-cache -f -v
+    # By path: with Homebrew on PATH a plain fc-cache is Homebrew's, which has
+    # its own config and cache, not the ones desktop apps use
+    /usr/bin/fc-cache -f -v
+    sudo /usr/bin/fc-cache -f -v
     
     echo "JetBrains Mono Nerd Font installation complete."
 }
@@ -746,8 +758,8 @@ patch_rime_ice() {
         source "$script_dir/bootstrap.sh"
         require 'recipe'
         output_dir="$RIME_DIR"
-        package='JalenLv/.dotfiles'
-        recipe='rime-tweaks'
+        package="${RIME_TWEAKS_ID%%:*}"
+        recipe="${RIME_TWEAKS_ID#*:}"
         recipe_options=()
         # The two key lines are the ones rime-ice's default.yaml has commented out
         patch_file rime_ice.custom.yaml << 'EOF'
@@ -760,10 +772,10 @@ EOF
     )
 }
 
-# Install rime-ice, and its grammar model if chosen, into the fcitx5 Rime
-# directory with plum, the Rime package manager. Run plum from a local clone:
-# piping its installer in through curl reports success even when the download
-# fails.
+# Install rime-ice, and the grammar model and own settings if chosen, into the
+# fcitx5 Rime directory with plum, the Rime package manager. Run plum from a
+# local clone: piping its installer in through curl reports success even when
+# the download fails.
 install_rime_ice() {
     local plum_dir
     local status=0
@@ -775,7 +787,7 @@ install_rime_ice() {
         rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice:others/recipes/grammar:schema=rime_ice ||
             status=1
     fi
-    if [[ "$status" -eq 0 ]]; then
+    if [[ "$status" -eq 0 && "${OPT_VALUE[chinese_input.tweaks]}" == "yes" ]]; then
         patch_rime_ice "$plum_dir" || status=1
     fi
     rm -rf "$plum_dir"
@@ -985,6 +997,10 @@ declare -A COMP_REQUIRES=(
 # Components only useful with a desktop. Without one detected they start
 # unchecked in the menu, but can still be selected.
 declare -A COMP_REQUIRES_DESKTOP=(
+    ["font"]=1
+    ["vscode"]=1
+    ["nomachine"]=1
+    ["rustdesk"]=1
     ["chinese_input"]=1
 )
 
@@ -1038,6 +1054,7 @@ declare -a OPTIONS=(
     "rustdesk.variant"
     "easytier.variant"
     "chinese_input.grammar"
+    "chinese_input.tweaks"
     "chinese_input.desktop"
 )
 
@@ -1047,6 +1064,7 @@ declare -A OPT_NAMES=(
     ["rustdesk.variant"]="RustDesk build"
     ["easytier.variant"]="EasyTier build"
     ["chinese_input.grammar"]="rime-ice grammar model"
+    ["chinese_input.tweaks"]="rime-ice paging and page size"
     ["chinese_input.desktop"]="Desktop to set fcitx5 up for"
 )
 
@@ -1061,6 +1079,7 @@ declare -A OPT_CHOICES=(
     ["rustdesk.variant"]="regular unattended"
     ["easytier.variant"]="cli gui"
     ["chinese_input.grammar"]="yes no"
+    ["chinese_input.tweaks"]="yes no"
     ["chinese_input.desktop"]="gnome kde other"
 )
 
@@ -1079,6 +1098,8 @@ declare -A OPT_CHOICE_NAMES=(
     ["easytier.variant.gui"]="GUI (desktop app)"
     ["chinese_input.grammar.yes"]="Yes (about 400 MB)"
     ["chinese_input.grammar.no"]="No"
+    ["chinese_input.tweaks.yes"]="Yes (7 per page, comma and period to page)"
+    ["chinese_input.tweaks.no"]="No"
     ["chinese_input.desktop.gnome"]="GNOME"
     ["chinese_input.desktop.kde"]="KDE Plasma"
     ["chinese_input.desktop.other"]="Other (X11 sessions only)"
@@ -1086,7 +1107,8 @@ declare -A OPT_CHOICE_NAMES=(
 
 declare -A OPT_VALUE=()
 
-# Give every option its starting value, going by the state of this machine.
+# Give every option its starting value, going by the state of this machine:
+# what is installed already is not selected again and is labelled as such.
 # An option left with a single choice is not shown on the options page.
 init_option_defaults() {
     local font_set
@@ -1106,6 +1128,10 @@ init_option_defaults() {
     done
     OPT_VALUE["font.sets"]="${missing_sets[*]}"
     OPT_VALUE["font.prefer_sc"]="yes"
+    if [ -f "$CJK_FONT_RULE" ]; then
+        OPT_VALUE["font.prefer_sc"]="no"
+        OPT_CHOICE_NAMES["font.prefer_sc.no"]="No (already in place)"
+    fi
 
     # RustDesk: keep whichever build is installed. The unattended one is
     # x86_64 only.
@@ -1114,10 +1140,20 @@ init_option_defaults() {
         OPT_CHOICES["rustdesk.variant"]="regular"
     elif is_deb_installed rustdesk-unattended-wayland; then
         OPT_VALUE["rustdesk.variant"]="unattended"
+        OPT_CHOICE_NAMES["rustdesk.variant.unattended"]+=" [installed]"
+    elif is_deb_installed rustdesk; then
+        OPT_CHOICE_NAMES["rustdesk.variant.regular"]+=" [installed]"
     fi
 
     # EasyTier: the two builds are exclusive and nothing here uninstalls one,
-    # so the choice is fixed once one of them is installed
+    # so the choice is fixed once one of them is installed. Otherwise the GUI
+    # build is the starting choice only where there is a desktop.
+    if is_easytier_cli_installed; then
+        OPT_CHOICE_NAMES["easytier.variant.cli"]+=" [installed]"
+    fi
+    if is_easytier_gui_installed; then
+        OPT_CHOICE_NAMES["easytier.variant.gui"]+=" [installed]"
+    fi
     if is_easytier_cli_installed && ! is_easytier_gui_installed; then
         OPT_CHOICES["easytier.variant"]="cli"
         OPT_VALUE["easytier.variant"]="cli"
@@ -1131,6 +1167,15 @@ init_option_defaults() {
     fi
 
     OPT_VALUE["chinese_input.grammar"]="yes"
+    if [ -f "$RIME_GRAMMAR_MODEL" ]; then
+        OPT_VALUE["chinese_input.grammar"]="no"
+        OPT_CHOICE_NAMES["chinese_input.grammar.no"]="No (already installed)"
+    fi
+    OPT_VALUE["chinese_input.tweaks"]="yes"
+    if is_rime_tweaks_applied; then
+        OPT_VALUE["chinese_input.tweaks"]="no"
+        OPT_CHOICE_NAMES["chinese_input.tweaks.no"]="No (already applied)"
+    fi
     OPT_VALUE["chinese_input.desktop"]=$(detect_desktop)
 }
 
