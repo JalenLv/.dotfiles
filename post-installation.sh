@@ -65,6 +65,12 @@ show_yesno() {
 # Component Detection Functions
 # ============================================================================
 
+# True inside a desktop session. Over SSH this is false even on a desktop
+# machine, so only use it for defaults, never to block anything.
+has_desktop() {
+    [[ -n "${XDG_CURRENT_DESKTOP-}" ]] || [[ -n "${GDMSESSION-}" ]]
+}
+
 is_zsh_installed() {
     command -v zsh &> /dev/null && [ -d "$HOME/.oh-my-zsh" ]
 }
@@ -113,6 +119,14 @@ is_ssh_tunnel_service_installed() {
     [ -f /etc/systemd/system/reverse-tunnel@.service ]
 }
 
+# Requires the grammar model too, so a partial install is offered again
+is_chinese_input_installed() {
+    local rime_dir="$HOME/.local/share/fcitx5/rime"
+    dpkg -l fcitx5-rime 2>/dev/null | grep -q '^ii' &&
+        [ -f "$rime_dir/rime_ice.schema.yaml" ] &&
+        [ -f "$rime_dir/wanxiang-lts-zh-hans.gram" ]
+}
+
 # ============================================================================
 # Installation Functions
 # ============================================================================
@@ -135,7 +149,7 @@ install_common_packages() {
         COMMON_PACKAGES+=(software-properties-common)
     fi
     # If there is desktop environment install vim-gtk3 else isntall vim
-    if [[ -n "${XDG_CURRENT_DESKTOP-}" ]] || [[ -n "${GDMSESSION-}" ]]; then
+    if has_desktop; then
         COMMON_PACKAGES+=(vim-gtk3)
     else
         COMMON_PACKAGES+=(vim)
@@ -528,6 +542,46 @@ EOF
     echo "Enable and start the service using: sudo systemctl enable --now reverse-tunnel@<remote_port>"
 }
 
+# Install rime-ice and its grammar model into the fcitx5 Rime directory with
+# plum, the Rime package manager. Run plum from a local clone: piping its
+# installer in through curl reports success even when the download fails.
+install_rime_ice() {
+    local plum_dir
+    local status=0
+    plum_dir=$(mktemp -d) || return 1
+    git clone --depth 1 https://github.com/rime/plum.git "$plum_dir" &&
+        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice &&
+        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice:others/recipes/grammar:schema=rime_ice ||
+        status=1
+    rm -rf "$plum_dir"
+    return "$status"
+}
+
+install_chinese_input() {
+    local status=0
+    local themes="$HOME/.local/share/fcitx5/themes"
+
+    echo "Installing fcitx5 with Rime..."
+    sudo apt install -y git curl wget fcitx5 fcitx5-chinese-addons fcitx5-rime \
+        fcitx5-config-qt im-config librime-plugin-lua librime-plugin-octagram || return 1
+    im-config -n fcitx5 || return 1
+
+    echo "Installing rime-ice and its grammar model..."
+    install_rime_ice || status=1
+
+    echo "Installing Fluent themes for fcitx5..."
+    mkdir -p "$themes"
+    wget -qO- https://github.com/Reverier-Xu/Fluent-fcitx5/archive/refs/heads/master.tar.gz |
+        tar -xz -C "$themes" --strip-components=1 --wildcards '*/Fluent*' || status=1
+
+    echo "Reboot, then use fcitx5-configtool to:"
+    echo "  - add rime"
+    echo "  - deploy rime"
+    echo "  - change keymaps"
+    echo "  - pick a Fluent theme"
+    return "$status"
+}
+
 # ============================================================================
 # Component Registry and Menu System
 # ============================================================================
@@ -546,6 +600,7 @@ declare -a COMPONENTS=(
     "easytier_cli"
     "easytier_gui"
     "ssh_tunnel"
+    "chinese_input"
 )
 
 declare -A COMP_NAMES=(
@@ -561,6 +616,7 @@ declare -A COMP_NAMES=(
     ["easytier_cli"]="EasyTier VPN (CLI)"
     ["easytier_gui"]="EasyTier VPN (GUI)"
     ["ssh_tunnel"]="SSH Reverse Tunnel Service Template"
+    ["chinese_input"]="fcitx5 + rime-ice"
 )
 
 declare -A COMP_DETECT=(
@@ -576,6 +632,7 @@ declare -A COMP_DETECT=(
     ["easytier_cli"]="is_easytier_cli_installed"
     ["easytier_gui"]="is_easytier_gui_installed"
     ["ssh_tunnel"]="is_ssh_tunnel_service_installed"
+    ["chinese_input"]="is_chinese_input_installed"
 )
 
 declare -A COMP_INSTALL=(
@@ -591,7 +648,19 @@ declare -A COMP_INSTALL=(
     ["easytier_cli"]="install_easytier_cli"
     ["easytier_gui"]="install_easytier_gui"
     ["ssh_tunnel"]="install_ssh_tunnel_service"
+    ["chinese_input"]="install_chinese_input"
 )
+
+# Components only useful with a desktop. Without one detected they start
+# unchecked in the menu, but can still be selected.
+declare -A COMP_REQUIRES_DESKTOP=(
+    ["chinese_input"]=1
+)
+
+# Whether a component that isn't installed yet starts checked in the menu
+is_default_selected() {
+    [[ -z "${COMP_REQUIRES_DESKTOP[$1]-}" ]] || has_desktop
+}
 
 # Build and show component selection menu
 show_component_menu() {
@@ -607,9 +676,12 @@ show_component_menu() {
             if $detect_func; then
                 # Installed - show with tag, default OFF
                 menu_args+=("$comp" "[INSTALLED] $name" "OFF")
-            else
+            elif is_default_selected "$comp"; then
                 # Not installed - default ON
                 menu_args+=("$comp" "$name" "ON")
+            else
+                # Not installed, but needs a desktop that wasn't detected - default OFF
+                menu_args+=("$comp" "$name" "OFF")
             fi
         done
         
@@ -637,8 +709,10 @@ show_component_menu() {
             local detect_func="${COMP_DETECT[$comp]}"
             if $detect_func; then
                 toggle_status+=(0)  # Installed, default off
-            else
+            elif is_default_selected "$comp"; then
                 toggle_status+=(1)  # Not installed, default on
+            else
+                toggle_status+=(0)  # Not installed, needs a desktop that wasn't detected
             fi
         done
         
