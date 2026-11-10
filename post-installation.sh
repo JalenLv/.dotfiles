@@ -32,12 +32,15 @@ ensure_tui_available() {
     echo "whiptail installed successfully."
 }
 
-# Show a yes/no dialog
+# Show a yes/no dialog. The two button labels are optional. Esc counts as no.
 show_yesno() {
     local title="$1"
     local message="$2"
+    local yes_label="${3-Yes}"
+    local no_label="${4-No}"
 
-    whiptail --title "$title" --yesno "$message" 0 0
+    whiptail --title "$title" --yes-button "$yes_label" --no-button "$no_label" \
+        --yesno "$message" 0 0
 }
 
 # ============================================================================
@@ -89,6 +92,45 @@ is_jetbrains_font_installed() {
     [ -d "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" ]
 }
 
+# apt packages of each font set. The jetbrains set is a download instead, see
+# install_jetbrains_font.
+declare -A FONT_SET_PACKAGES=(
+    ["noto_cjk"]="fonts-noto-cjk"
+    ["wqy"]="fonts-wqy-microhei fonts-wqy-zenhei"
+    ["arphic"]="fonts-arphic-ukai fonts-arphic-uming"
+    ["noto_cjk_extra"]="fonts-noto-cjk-extra"
+    ["lxgw"]="fonts-lxgw-wenkai"
+)
+
+# Font sets that start ticked
+FONT_SETS_DEFAULT="jetbrains noto_cjk wqy arphic"
+
+# Named to be read before the rules other packages put at priority 64, such as
+# WenQuanYi's and Ubuntu's language-selector: the first rule read wins.
+CJK_FONT_RULE=/etc/fonts/conf.d/64-00-prefer-simplified-chinese.conf
+
+is_font_set_installed() {
+    local package
+
+    if [[ "$1" == "jetbrains" ]]; then
+        is_jetbrains_font_installed
+        return
+    fi
+    for package in ${FONT_SET_PACKAGES[$1]}; do
+        is_deb_installed "$package" || return 1
+    done
+}
+
+# Installed when the default font sets and the font rule are all in place
+is_fonts_installed() {
+    local font_set
+
+    for font_set in $FONT_SETS_DEFAULT; do
+        is_font_set_installed "$font_set" || return 1
+    done
+    [ -f "$CJK_FONT_RULE" ]
+}
+
 is_homebrew_installed() {
     command -v brew &> /dev/null || [ -d "/home/linuxbrew/.linuxbrew" ]
 }
@@ -126,6 +168,10 @@ is_easytier_gui_installed() {
     dpkg -l easytier-gui 2>/dev/null | grep -q '^ii'
 }
 
+is_easytier_installed() {
+    is_easytier_cli_installed || is_easytier_gui_installed
+}
+
 is_ssh_tunnel_service_installed() {
     [ -f /etc/systemd/system/reverse-tunnel@.service ]
 }
@@ -147,6 +193,15 @@ installed_label() {
                 echo "INSTALLED: unattended"
             else
                 echo "INSTALLED: regular"
+            fi
+            ;;
+        easytier)
+            if is_easytier_cli_installed && is_easytier_gui_installed; then
+                echo "INSTALLED: CLI + GUI"
+            elif is_easytier_cli_installed; then
+                echo "INSTALLED: CLI"
+            else
+                echo "INSTALLED: GUI"
             fi
             ;;
         chinese_input)
@@ -245,6 +300,82 @@ install_jetbrains_font() {
     echo "JetBrains Mono Nerd Font installation complete."
 }
 
+# Print one <match> block of the font rule: put the given font families first
+# for the generic family, either for text tagged with the language or, with
+# "default", for all text that is not tagged Japanese or Korean.
+cjk_font_match() {
+    local lang="$1"
+    local generic="$2"
+    local family
+    shift 2
+
+    echo '    <match target="pattern">'
+    if [[ "$lang" == "default" ]]; then
+        echo '        <test qual="all" name="lang" compare="not_eq"><string>ja</string></test>'
+        echo '        <test qual="all" name="lang" compare="not_eq"><string>ko</string></test>'
+    else
+        echo "        <test name=\"lang\"><string>$lang</string></test>"
+    fi
+    echo "        <test name=\"family\"><string>$generic</string></test>"
+    echo '        <edit name="family" mode="prepend">'
+    for family in "$@"; do
+        echo "            <string>$family</string>"
+    done
+    echo '        </edit>'
+    echo '    </match>'
+}
+
+# Font rule for Chinese text that does not name a font. Without it such text
+# gets whatever fontconfig lists first: a Japanese font, or WenQuanYi Zen Hei
+# once that is installed, since its package promotes it for sans-serif, serif
+# and monospace alike. Rules at this priority are added after the Latin fonts,
+# so Latin text keeps its font, and text tagged zh-tw or zh-hk keeps the Noto
+# variant its own rule gives it.
+install_cjk_font_rule() {
+    {
+        echo '<?xml version="1.0"?>'
+        echo '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">'
+        echo '<!-- Written by .dotfiles/post-installation.sh -->'
+        echo '<fontconfig>'
+        cjk_font_match ja sans-serif "Noto Sans CJK JP"
+        cjk_font_match ja serif "Noto Serif CJK JP"
+        cjk_font_match ja monospace "Noto Sans Mono CJK JP"
+        cjk_font_match ko sans-serif "Noto Sans CJK KR"
+        cjk_font_match ko serif "Noto Serif CJK KR"
+        cjk_font_match ko monospace "Noto Sans Mono CJK KR"
+        cjk_font_match default sans-serif "Noto Sans CJK SC" "WenQuanYi Micro Hei" "WenQuanYi Zen Hei"
+        cjk_font_match default serif "Noto Serif CJK SC" "AR PL UMing CN"
+        cjk_font_match default monospace "Noto Sans Mono CJK SC" "WenQuanYi Micro Hei Mono" "WenQuanYi Zen Hei Mono"
+        echo '</fontconfig>'
+    } | sudo tee "$CJK_FONT_RULE" > /dev/null
+}
+
+install_fonts() {
+    local font_set
+    local -a packages=()
+
+    for font_set in ${OPT_VALUE[font.sets]}; do
+        if [[ "$font_set" == "jetbrains" ]]; then
+            install_jetbrains_font
+        else
+            packages+=(${FONT_SET_PACKAGES[$font_set]})
+        fi
+    done
+    if [[ "${OPT_VALUE[font.prefer_sc]}" == "yes" ]]; then
+        # The rule puts Noto CJK first, so it has to be installed
+        packages+=(fonts-noto-cjk)
+    fi
+
+    if [ ${#packages[@]} -gt 0 ]; then
+        echo "Installing font packages..."
+        sudo apt install -y "${packages[@]}"
+    fi
+    if [[ "${OPT_VALUE[font.prefer_sc]}" == "yes" ]]; then
+        echo "Writing the font rule for Chinese text..."
+        install_cjk_font_rule
+    fi
+}
+
 install_homebrew() {
     echo "Downloading Homebrew..."
     TMP=$(mktemp)
@@ -315,20 +446,8 @@ install_neovim() {
     echo "Installing Neovim from Homebrew..."
     echo "This installs Node.js and tree-sitter-cli from Homebrew as dependencies."
     echo "This also installs neovim module in conda's base environment."
-    
-    # Check dependencies
-    if ! is_homebrew_installed; then
-        echo "Error: Homebrew is required for Neovim installation."
-        echo "Please install Homebrew first."
-        return 1
-    fi
-    
-    if ! is_miniconda_installed; then
-        echo "Error: Miniconda is required for Neovim installation."
-        echo "Please install Miniconda first."
-        return 1
-    fi
-    
+
+    # Homebrew and Miniconda are there: main() checks COMP_REQUIRES first
     (
         SHELL_NAME=$(basename "$SHELL")
         case "$SHELL_NAME" in
@@ -576,6 +695,13 @@ install_easytier_gui() {
     echo "Easytier GUI installation complete."
 }
 
+install_easytier() {
+    case "${OPT_VALUE[easytier.variant]}" in
+        cli) install_easytier_cli ;;
+        gui) install_easytier_gui ;;
+    esac
+}
+
 install_ssh_tunnel_service() {
     echo "Setting up SSH reverse tunnel service..."
     sudo tee /etc/systemd/system/reverse-tunnel@.service > /dev/null << 'EOF'
@@ -604,6 +730,36 @@ EOF
     add_note "Enable and start the service: sudo systemctl enable --now reverse-tunnel@<remote_port>"
 }
 
+# Own settings for the rime_ice schema: 7 candidates per page, and comma and
+# period to page through them. They are written with plum's patch writer, the
+# one its recipes use, so they become one more "# Rx: ... {" block in
+# rime_ice.custom.yaml and a re-run replaces that block.
+# They are in the schema's file and not default.custom.yaml on purpose. There
+# the keys would have to be appended to the default list, and Rime replaces the
+# whole list with them whenever another block comes first in the file. A
+# schema's own bindings are added to the default ones by Rime itself.
+patch_rime_ice() {
+    local plum_dir="$1"
+
+    (
+        script_dir="$plum_dir/scripts"
+        source "$script_dir/bootstrap.sh"
+        require 'recipe'
+        output_dir="$RIME_DIR"
+        package='JalenLv/.dotfiles'
+        recipe='rime-tweaks'
+        recipe_options=()
+        # The two key lines are the ones rime-ice's default.yaml has commented out
+        patch_file rime_ice.custom.yaml << 'EOF'
+  - patch/+:
+      menu/page_size: 7
+      key_binder/bindings:
+        - { when: has_menu, accept: comma, send: Page_Up }
+        - { when: has_menu, accept: period, send: Page_Down }
+EOF
+    )
+}
+
 # Install rime-ice, and its grammar model if chosen, into the fcitx5 Rime
 # directory with plum, the Rime package manager. Run plum from a local clone:
 # piping its installer in through curl reports success even when the download
@@ -618,6 +774,9 @@ install_rime_ice() {
     if [[ "$status" -eq 0 && "${OPT_VALUE[chinese_input.grammar]}" == "yes" ]]; then
         rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice:others/recipes/grammar:schema=rime_ice ||
             status=1
+    fi
+    if [[ "$status" -eq 0 ]]; then
+        patch_rime_ice "$plum_dir" || status=1
     fi
     rm -rf "$plum_dir"
     return "$status"
@@ -767,31 +926,29 @@ declare -a COMPONENTS=(
     "docker"
     "nomachine"
     "rustdesk"
-    "easytier_cli"
-    "easytier_gui"
+    "easytier"
     "ssh_tunnel"
     "chinese_input"
 )
 
 declare -A COMP_NAMES=(
     ["zsh"]="Zsh + Oh My Zsh"
-    ["font"]="JetBrains Mono Nerd Font"
+    ["font"]="Fonts"
     ["homebrew"]="Homebrew Package Manager"
     ["miniconda"]="Miniconda (Python)"
-    ["neovim"]="Neovim (requires Homebrew & Miniconda)"
+    ["neovim"]="Neovim"
     ["vscode"]="Visual Studio Code"
     ["docker"]="Docker"
     ["nomachine"]="NoMachine Remote Desktop"
     ["rustdesk"]="RustDesk Remote Desktop"
-    ["easytier_cli"]="EasyTier VPN (CLI)"
-    ["easytier_gui"]="EasyTier VPN (GUI)"
+    ["easytier"]="EasyTier VPN"
     ["ssh_tunnel"]="SSH Reverse Tunnel Service Template"
     ["chinese_input"]="fcitx5 + rime-ice"
 )
 
 declare -A COMP_DETECT=(
     ["zsh"]="is_zsh_installed"
-    ["font"]="is_jetbrains_font_installed"
+    ["font"]="is_fonts_installed"
     ["homebrew"]="is_homebrew_installed"
     ["miniconda"]="is_miniconda_installed"
     ["neovim"]="is_neovim_installed"
@@ -799,15 +956,14 @@ declare -A COMP_DETECT=(
     ["docker"]="is_docker_installed"
     ["nomachine"]="is_nomachine_installed"
     ["rustdesk"]="is_rustdesk_installed"
-    ["easytier_cli"]="is_easytier_cli_installed"
-    ["easytier_gui"]="is_easytier_gui_installed"
+    ["easytier"]="is_easytier_installed"
     ["ssh_tunnel"]="is_ssh_tunnel_service_installed"
     ["chinese_input"]="is_chinese_input_installed"
 )
 
 declare -A COMP_INSTALL=(
     ["zsh"]="install_zsh"
-    ["font"]="install_jetbrains_font"
+    ["font"]="install_fonts"
     ["homebrew"]="install_homebrew"
     ["miniconda"]="install_miniconda"
     ["neovim"]="install_neovim"
@@ -815,10 +971,15 @@ declare -A COMP_INSTALL=(
     ["docker"]="install_docker"
     ["nomachine"]="install_nomachine"
     ["rustdesk"]="install_rustdesk"
-    ["easytier_cli"]="install_easytier_cli"
-    ["easytier_gui"]="install_easytier_gui"
+    ["easytier"]="install_easytier"
     ["ssh_tunnel"]="install_ssh_tunnel_service"
     ["chinese_input"]="install_chinese_input"
+)
+
+# Components that have to be installed before a component, by id. They must
+# come earlier in COMPONENTS, which is the order things are installed in.
+declare -A COMP_REQUIRES=(
+    ["neovim"]="homebrew miniconda"
 )
 
 # Components only useful with a desktop. Without one detected they start
@@ -836,6 +997,7 @@ is_default_selected() {
 # "<level>|<reason>". restart_need has the cases that depend on an option.
 declare -A COMP_RESTART=(
     ["zsh"]="terminal|Oh My Zsh set up in ~/.zshrc"
+    ["font"]="relogin|running apps keep the fonts they started with"
     ["homebrew"]="terminal|shell rc file changed"
     ["miniconda"]="terminal|shell rc file changed"
     ["neovim"]="terminal|shell rc file changed"
@@ -866,31 +1028,55 @@ restart_need() {
 # Component Options
 # ============================================================================
 
-# Options are named "<component>.<option>" and are all pick-one lists. The
-# options page offers those of the selected components, and installers read
-# the chosen value from OPT_VALUE.
+# Options are named "<component>.<option>". Most are pick-one lists; the ones
+# in OPT_MULTI are tick-lists, whose value is a space-separated list of
+# choices. The options page offers the options of the selected components, and
+# installers read the chosen value from OPT_VALUE.
 declare -a OPTIONS=(
+    "font.sets"
+    "font.prefer_sc"
     "rustdesk.variant"
+    "easytier.variant"
     "chinese_input.grammar"
     "chinese_input.desktop"
 )
 
 declare -A OPT_NAMES=(
+    ["font.sets"]="Fonts to install"
+    ["font.prefer_sc"]="Prefer Simplified Chinese fonts for Chinese text"
     ["rustdesk.variant"]="RustDesk build"
+    ["easytier.variant"]="EasyTier build"
     ["chinese_input.grammar"]="rime-ice grammar model"
     ["chinese_input.desktop"]="Desktop to set fcitx5 up for"
 )
 
+declare -A OPT_MULTI=(
+    ["font.sets"]=1
+)
+
 # Choice ids, space-separated
 declare -A OPT_CHOICES=(
+    ["font.sets"]="jetbrains noto_cjk wqy arphic noto_cjk_extra lxgw"
+    ["font.prefer_sc"]="yes no"
     ["rustdesk.variant"]="regular unattended"
+    ["easytier.variant"]="cli gui"
     ["chinese_input.grammar"]="yes no"
     ["chinese_input.desktop"]="gnome kde other"
 )
 
 declare -A OPT_CHOICE_NAMES=(
+    ["font.sets.jetbrains"]="JetBrains Mono Nerd Font"
+    ["font.sets.noto_cjk"]="Noto CJK (89 MB)"
+    ["font.sets.wqy"]="WenQuanYi Micro Hei + Zen Hei (21 MB)"
+    ["font.sets.arphic"]="AR PL UKai + UMing (38 MB)"
+    ["font.sets.noto_cjk_extra"]="Noto CJK extra weights (210 MB)"
+    ["font.sets.lxgw"]="LXGW WenKai (114 MB)"
+    ["font.prefer_sc.yes"]="Yes"
+    ["font.prefer_sc.no"]="No"
     ["rustdesk.variant.regular"]="Regular"
     ["rustdesk.variant.unattended"]="Unattended Wayland (preview)"
+    ["easytier.variant.cli"]="CLI (runs as a service)"
+    ["easytier.variant.gui"]="GUI (desktop app)"
     ["chinese_input.grammar.yes"]="Yes (about 400 MB)"
     ["chinese_input.grammar.no"]="No"
     ["chinese_input.desktop.gnome"]="GNOME"
@@ -900,15 +1086,50 @@ declare -A OPT_CHOICE_NAMES=(
 
 declare -A OPT_VALUE=()
 
-# Give every option its starting value, going by the state of this machine
+# Give every option its starting value, going by the state of this machine.
+# An option left with a single choice is not shown on the options page.
 init_option_defaults() {
+    local font_set
+    local -a missing_sets=()
+
+    # Fonts: tick the default sets that are not installed yet. LXGW WenKai is
+    # not packaged everywhere (Ubuntu 22.04 lacks it).
+    if ! apt-cache show fonts-lxgw-wenkai &> /dev/null; then
+        OPT_CHOICES["font.sets"]="${OPT_CHOICES[font.sets]/ lxgw/}"
+    fi
+    for font_set in ${OPT_CHOICES[font.sets]}; do
+        if is_font_set_installed "$font_set"; then
+            OPT_CHOICE_NAMES["font.sets.$font_set"]+=" [installed]"
+        elif [[ " $FONT_SETS_DEFAULT " == *" $font_set "* ]]; then
+            missing_sets+=("$font_set")
+        fi
+    done
+    OPT_VALUE["font.sets"]="${missing_sets[*]}"
+    OPT_VALUE["font.prefer_sc"]="yes"
+
+    # RustDesk: keep whichever build is installed. The unattended one is
+    # x86_64 only.
     OPT_VALUE["rustdesk.variant"]="regular"
     if [[ "$(uname -m)" != "x86_64" ]]; then
-        # The unattended build is x86_64 only, which leaves nothing to choose
         OPT_CHOICES["rustdesk.variant"]="regular"
     elif is_deb_installed rustdesk-unattended-wayland; then
         OPT_VALUE["rustdesk.variant"]="unattended"
     fi
+
+    # EasyTier: the two builds are exclusive and nothing here uninstalls one,
+    # so the choice is fixed once one of them is installed
+    if is_easytier_cli_installed && ! is_easytier_gui_installed; then
+        OPT_CHOICES["easytier.variant"]="cli"
+        OPT_VALUE["easytier.variant"]="cli"
+    elif is_easytier_gui_installed && ! is_easytier_cli_installed; then
+        OPT_CHOICES["easytier.variant"]="gui"
+        OPT_VALUE["easytier.variant"]="gui"
+    elif has_desktop; then
+        OPT_VALUE["easytier.variant"]="gui"
+    else
+        OPT_VALUE["easytier.variant"]="cli"
+    fi
+
     OPT_VALUE["chinese_input.grammar"]="yes"
     OPT_VALUE["chinese_input.desktop"]=$(detect_desktop)
 }
@@ -929,68 +1150,169 @@ active_options() {
     done
 }
 
-# An option and its current value, e.g. "RustDesk build: Regular"
+# An option and its current value in one line, e.g. "RustDesk build: Regular"
+# or "Fonts to install: 3 of 6"
 option_summary() {
-    local key="$1.${OPT_VALUE[$1]}"
-    echo "${OPT_NAMES[$1]}: ${OPT_CHOICE_NAMES[$key]}"
+    local opt="$1"
+    local key="$opt.${OPT_VALUE[$opt]}"
+    local -a chosen=(${OPT_VALUE[$opt]})
+    local -a choices=(${OPT_CHOICES[$opt]})
+
+    if [[ -n "${OPT_MULTI[$opt]-}" ]]; then
+        echo "${OPT_NAMES[$opt]}: ${#chosen[@]} of ${#choices[@]}"
+    else
+        echo "${OPT_NAMES[$opt]}: ${OPT_CHOICE_NAMES[$key]}"
+    fi
+}
+
+# The same in full: a tick-list gets one line per ticked choice
+option_details() {
+    local opt="$1"
+    local choice
+
+    if [[ -z "${OPT_MULTI[$opt]-}" ]]; then
+        option_summary "$opt"
+    elif [[ -z "${OPT_VALUE[$opt]}" ]]; then
+        echo "${OPT_NAMES[$opt]}: none"
+    else
+        echo "${OPT_NAMES[$opt]}:"
+        for choice in ${OPT_VALUE[$opt]}; do
+            echo "  + ${OPT_CHOICE_NAMES[$opt.$choice]}"
+        done
+    fi
 }
 
 # ============================================================================
 # Menus
 # ============================================================================
 
-# Checklist of components. Prints the selected ones, or nothing on cancel.
+# The components picked on the component list, in install order
+declare -a SELECTED=()
+
+# Checklist of components. The arguments are the components to tick; without
+# any, the defaults are ticked. Prints the selection, returns 1 if cancelled.
 show_component_menu() {
     local -a menu_args=()
-    local comp name result
+    local comp name state result
 
     for comp in "${COMPONENTS[@]}"; do
         name="${COMP_NAMES[$comp]}"
+        if [[ -n "${COMP_REQUIRES[$comp]-}" ]]; then
+            name+=" (requires ${COMP_REQUIRES[$comp]// /, })"
+        fi
+
+        state="OFF"
         if ${COMP_DETECT[$comp]}; then
             # Installed - show with tag, default OFF
-            menu_args+=("$comp" "[$(installed_label "$comp")] $name" "OFF")
-        elif is_default_selected "$comp"; then
-            # Not installed - default ON
-            menu_args+=("$comp" "$name" "ON")
-        else
-            # Not installed, but needs a desktop that wasn't detected - default OFF
-            menu_args+=("$comp" "$name" "OFF")
+            name="[$(installed_label "$comp")] $name"
+        elif [ $# -eq 0 ] && is_default_selected "$comp"; then
+            # Not installed - default ON, unless it needs a desktop that wasn't detected
+            state="ON"
         fi
+        if [[ " $* " == *" $comp "* ]]; then
+            state="ON"
+        fi
+        menu_args+=("$comp" "$name" "$state")
     done
 
     result=$(whiptail --title "Component Installation" \
         --checklist "Select components to install (Space to toggle, Enter to confirm):" \
         0 0 0 "${menu_args[@]}" \
-        3>&1 1>&2 2>&3) || return 0
+        3>&1 1>&2 2>&3) || return 1
 
     # whiptail puts each selected tag in quotes
     echo "$result" | tr -d '"'
 }
 
-# Pick-one list for a single option
+# Print those of the given components, in install order
+in_install_order() {
+    local comp
+
+    for comp in "${COMPONENTS[@]}"; do
+        if [[ " $* " == *" $comp "* ]]; then
+            echo "$comp"
+        fi
+    done
+}
+
+# Print the requirements of the selected components that are neither
+# installed nor selected
+missing_requirements() {
+    local comp dep
+    local seen=" "
+
+    for comp in "${SELECTED[@]}"; do
+        for dep in ${COMP_REQUIRES[$comp]-}; do
+            if [[ " ${SELECTED[*]} " == *" $dep "* || "$seen" == *" $dep "* ]] || ${COMP_DETECT[$dep]}; then
+                continue
+            fi
+            seen+="$dep "
+            echo "$dep"
+        done
+    done
+}
+
+# Offer to add missing requirements to SELECTED. Returns 1 if the user says no.
+add_requirements() {
+    local -a missing
+    local comp dep needed_by message
+
+    while true; do
+        missing=($(missing_requirements))
+        if [ ${#missing[@]} -eq 0 ]; then
+            return 0
+        fi
+
+        message="Your selection needs these, which are not installed:\n\n"
+        for dep in "${missing[@]}"; do
+            needed_by=""
+            for comp in "${SELECTED[@]}"; do
+                if [[ " ${COMP_REQUIRES[$comp]-} " == *" $dep "* ]]; then
+                    needed_by+="${needed_by:+, }${COMP_NAMES[$comp]}"
+                fi
+            done
+            message+="- ${COMP_NAMES[$dep]} (needed by $needed_by)\n"
+        done
+        message+="\nAdd them to the selection?"
+        show_yesno "Missing Requirements" "$message" "Add" "Back" || return 1
+
+        SELECTED=($(in_install_order "${SELECTED[@]}" "${missing[@]}"))
+    done
+}
+
+# Edit one option: a pick-one list, or a tick-list for the options in
+# OPT_MULTI. Cancel and Esc leave the value as it was.
 edit_option() {
     local opt="$1"
-    local -a radio_args=()
+    local -a list_args=()
     local choice state result
+    local box="--radiolist"
 
+    if [[ -n "${OPT_MULTI[$opt]-}" ]]; then
+        box="--checklist"
+    fi
     for choice in ${OPT_CHOICES[$opt]}; do
         state="OFF"
-        if [[ "$choice" == "${OPT_VALUE[$opt]}" ]]; then
+        if [[ " ${OPT_VALUE[$opt]} " == *" $choice "* ]]; then
             state="ON"
         fi
-        radio_args+=("$choice" "${OPT_CHOICE_NAMES[$opt.$choice]}" "$state")
+        list_args+=("$choice" "${OPT_CHOICE_NAMES[$opt.$choice]}" "$state")
     done
 
-    if result=$(whiptail --title "${OPT_NAMES[$opt]}" --notags \
-        --radiolist "Space to select, Enter to confirm:" \
-        0 0 0 "${radio_args[@]}" \
-        3>&1 1>&2 2>&3) && [[ -n "$result" ]]; then
-        OPT_VALUE[$opt]="$result"
+    if result=$(whiptail --title "${OPT_NAMES[$opt]}" --notags "$box" \
+        "Space to select, Enter to confirm:" \
+        0 0 0 "${list_args[@]}" \
+        3>&1 1>&2 2>&3); then
+        # whiptail puts each ticked tag of a tick-list in quotes
+        result=$(echo "$result" | tr -d '"')
+        if [[ -n "$result" || -n "${OPT_MULTI[$opt]-}" ]]; then
+            OPT_VALUE[$opt]="$result"
+        fi
     fi
 }
 
 # Settings page: one row per given option, showing its current value. It
-# changes OPT_VALUE, so it must not run in a subshell. Returns 1 on cancel.
+# changes OPT_VALUE, so it must not run in a subshell. Returns 1 on Back or Esc.
 show_options_page() {
     local -a menu_args
     local opt choice
@@ -1003,7 +1325,7 @@ show_options_page() {
         menu_args+=("continue" "Continue")
 
         choice=$(whiptail --title "Component Options" --notags \
-            --default-item "continue" --ok-button "Select" \
+            --default-item "continue" --ok-button "Select" --cancel-button "Back" \
             --menu "Press Enter on an option to change it, or on Continue to go on:" \
             0 0 0 "${menu_args[@]}" \
             3>&1 1>&2 2>&3) || return 1
@@ -1015,6 +1337,27 @@ show_options_page() {
     done
 }
 
+# Ask for the go-ahead, listing the selected components and their options
+confirm_installation() {
+    local comp opt line
+    local message="The following components will be installed:\n\n"
+
+    for comp in "${SELECTED[@]}"; do
+        message+="- ${COMP_NAMES[$comp]}\n"
+        for opt in "$@"; do
+            if [[ "${opt%%.*}" != "$comp" ]]; then
+                continue
+            fi
+            while IFS= read -r line; do
+                message+="    $line\n"
+            done < <(option_details "$opt")
+        done
+    done
+    message+="\nDo you want to proceed with the installation?"
+
+    show_yesno "Confirm Installation" "$message" "Install" "Back"
+}
+
 # ============================================================================
 # Main Execution
 # ============================================================================
@@ -1023,7 +1366,25 @@ show_options_page() {
 declare -a DONE_OK=()
 declare -a DONE_FAILED=()
 declare -a NOT_ATTEMPTED=()
+declare -A SKIP_REASON=()
 STOPPED_AT=""
+
+# Print the first requirement of a component that is not in place at this
+# point of the run: it failed just now, or it is neither done nor installed
+unmet_requirement() {
+    local dep
+
+    for dep in ${COMP_REQUIRES[$1]-}; do
+        if [[ " ${DONE_FAILED[*]} " == *" $dep "* ]]; then
+            echo "$dep"
+            return
+        fi
+        if [[ " ${DONE_OK[*]} " != *" $dep "* ]] && ! ${COMP_DETECT[$dep]}; then
+            echo "$dep"
+            return
+        fi
+    done
+}
 
 # Results, restart needs and follow-up notes, all in one place at the end
 print_summary() {
@@ -1056,7 +1417,7 @@ print_summary() {
         echo ""
         echo -e "${COLOR_BOLD}Not attempted (${#NOT_ATTEMPTED[@]}):${COLOR_RESET}"
         for comp in "${NOT_ATTEMPTED[@]}"; do
-            echo -e "  ${COLOR_YELLOW}-${COLOR_RESET} ${COMP_NAMES[$comp]}"
+            echo -e "  ${COLOR_YELLOW}-${COLOR_RESET} ${COMP_NAMES[$comp]}${SKIP_REASON[$comp]:+ (${SKIP_REASON[$comp]})}"
         done
     fi
 
@@ -1098,9 +1459,8 @@ print_summary() {
 }
 
 main() {
-    local -a selected_components
     local -a options
-    local comp opt confirm_message rc i
+    local comp picked blocker rc i
 
     # Check if apt is available
     if ! command -v apt &> /dev/null; then
@@ -1129,42 +1489,40 @@ main() {
         echo "Skipping common packages installation."
     fi
 
-    # Show component selection menu
-    echo ""
-    selected_components=($(show_component_menu))
-
-    # Check if any components were selected
-    if [ ${#selected_components[@]} -eq 0 ]; then
-        echo ""
-        echo "No components selected. Exiting."
-        exit 0
-    fi
-
-    # Let the user adjust the options of the selected components
     init_option_defaults
-    options=($(active_options "${selected_components[@]}"))
-    if [ ${#options[@]} -gt 0 ]; then
-        if ! show_options_page "${options[@]}"; then
+
+    # Component list -> options page -> confirmation. Back and Esc go one
+    # screen back, keeping the ticks and option values; only the component
+    # list quits.
+    while true; do
+        echo ""
+        if ! picked=$(show_component_menu "${SELECTED[@]}"); then
             echo "Installation cancelled."
             exit 0
         fi
-    fi
+        SELECTED=($picked)
+        if [ ${#SELECTED[@]} -eq 0 ]; then
+            echo "No components selected. Exiting."
+            exit 0
+        fi
+        if ! add_requirements; then
+            continue
+        fi
 
-    # Confirm installation
-    confirm_message="The following components will be installed:\n\n"
-    for comp in "${selected_components[@]}"; do
-        confirm_message+="- ${COMP_NAMES[$comp]}\n"
-        for opt in "${options[@]}"; do
-            if [[ "${opt%%.*}" == "$comp" ]]; then
-                confirm_message+="    $(option_summary "$opt")\n"
+        # The options page is skipped when no option applies
+        options=($(active_options "${SELECTED[@]}"))
+        while true; do
+            if [ ${#options[@]} -gt 0 ] && ! show_options_page "${options[@]}"; then
+                continue 2
+            fi
+            if confirm_installation "${options[@]}"; then
+                break 2
+            fi
+            if [ ${#options[@]} -eq 0 ]; then
+                continue 2
             fi
         done
     done
-    confirm_message+="\nDo you want to proceed with the installation?"
-    if ! show_yesno "Confirm Installation" "$confirm_message"; then
-        echo "Installation cancelled."
-        exit 0
-    fi
 
     # Install selected components
     echo ""
@@ -1176,9 +1534,18 @@ main() {
     NOTES_DIR=$(mktemp -d)
     trap 'rm -rf "$NOTES_DIR"' EXIT
 
-    for i in "${!selected_components[@]}"; do
-        comp="${selected_components[$i]}"
+    for i in "${!SELECTED[@]}"; do
+        comp="${SELECTED[$i]}"
         echo ""
+
+        blocker=$(unmet_requirement "$comp")
+        if [[ -n "$blocker" ]]; then
+            echo -e "${COLOR_YELLOW}${COLOR_BOLD}>>> Skipping: ${COMP_NAMES[$comp]}${COLOR_RESET} (needs ${COMP_NAMES[$blocker]})"
+            NOT_ATTEMPTED+=("$comp")
+            SKIP_REASON[$comp]="needs ${COMP_NAMES[$blocker]}"
+            continue
+        fi
+
         echo -e "${COLOR_CYAN}${COLOR_BOLD}>>> Installing: ${COMP_NAMES[$comp]}${COLOR_RESET}"
         echo ""
 
@@ -1198,7 +1565,7 @@ main() {
             DONE_OK+=("$comp")
         elif [ "$rc" -eq "$STOP_AND_RELOGIN" ]; then
             STOPPED_AT="$comp"
-            NOT_ATTEMPTED=("${selected_components[@]:i+1}")
+            NOT_ATTEMPTED+=("${SELECTED[@]:i+1}")
             break
         else
             DONE_FAILED+=("$comp")
