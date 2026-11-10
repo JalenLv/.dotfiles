@@ -542,34 +542,16 @@ EOF
     echo "Enable and start the service using: sudo systemctl enable --now reverse-tunnel@<remote_port>"
 }
 
-# Install a plum (Rime package manager) target into the fcitx5 Rime directory,
-# retrying because rime-ice and its grammar model are large downloads.
-run_plum_with_retry() {
-    local plum_dir="$1"
-    local target="$2"
-    local n=3
-    local i
-    for (( i = 1; i <= n; i++ )); do
-        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" "$target" && return 0
-        # plum treats a partial model left by a failed download as up to date
-        rm -f "$plum_dir/package/iDvel/ice/wanxiang-lts-zh-hans.gram"
-        if (( i < n )); then
-            echo "Attempt $i failed, retrying in 30s..."
-            sleep 30
-        fi
-    done
-    echo "All $n attempts failed: $target" >&2
-    return 1
-}
-
+# Install rime-ice and its grammar model into the fcitx5 Rime directory with
+# plum, the Rime package manager. Run plum from a local clone: piping its
+# installer in through curl reports success even when the download fails.
 install_rime_ice() {
     local plum_dir
     local status=0
     plum_dir=$(mktemp -d) || return 1
-    # Run plum from a local clone: `bash <(curl ...)` exits 0 when curl fails
     git clone --depth 1 https://github.com/rime/plum.git "$plum_dir" &&
-        run_plum_with_retry "$plum_dir" iDvel/rime-ice &&
-        run_plum_with_retry "$plum_dir" iDvel/rime-ice:others/recipes/grammar:schema=rime_ice ||
+        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice &&
+        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice:others/recipes/grammar:schema=rime_ice ||
         status=1
     rm -rf "$plum_dir"
     return "$status"
@@ -584,7 +566,7 @@ install_chinese_input() {
         fcitx5-config-qt im-config librime-plugin-lua librime-plugin-octagram || return 1
     im-config -n fcitx5 || return 1
 
-    echo "Installing rime-ice and its grammar model (~420 MB download)..."
+    echo "Installing rime-ice and its grammar model..."
     install_rime_ice || status=1
 
     echo "Installing Fluent themes for fcitx5..."
@@ -634,7 +616,7 @@ declare -A COMP_NAMES=(
     ["easytier_cli"]="EasyTier VPN (CLI)"
     ["easytier_gui"]="EasyTier VPN (GUI)"
     ["ssh_tunnel"]="SSH Reverse Tunnel Service Template"
-    ["chinese_input"]="Chinese Input: fcitx5 + rime-ice (desktop, ~420 MB download)"
+    ["chinese_input"]="Chinese Input: fcitx5 + rime-ice"
 )
 
 declare -A COMP_DETECT=(
