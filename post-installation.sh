@@ -9,7 +9,7 @@ os=$(grep '^ID=' /etc/os-release | cut -d= -f2- | tr -d '"')
 # TUI Framework Functions
 # ============================================================================
 
-# ANSI color codes for enhanced_read mode
+# ANSI color codes
 COLOR_RESET='\033[0m'
 COLOR_GREEN='\033[0;32m'
 COLOR_YELLOW='\033[0;33m'
@@ -17,48 +17,27 @@ COLOR_CYAN='\033[0;36m'
 COLOR_RED='\033[0;31m'
 COLOR_BOLD='\033[1m'
 
-# Global variable to track TUI mode
-TUI_MODE="enhanced_read"  # Default to enhanced read, will switch to whiptail if available
-
-# Ensure TUI is available (whiptail first, try install, then fallback)
+# The menus need whiptail. It ships with Debian and Ubuntu, so this only has
+# to install it on stripped-down images.
 ensure_tui_available() {
     if command -v whiptail &> /dev/null; then
-        TUI_MODE="whiptail"
         return 0
     fi
-    
-    # Try to install whiptail
+
     echo "whiptail not found. Attempting to install..."
-    if sudo apt install -y whiptail; then
-        TUI_MODE="whiptail"
-        echo "whiptail installed successfully."
-        return 0
+    if ! sudo apt install -y whiptail; then
+        echo "Could not install whiptail, which this script needs for its menus."
+        exit 1
     fi
-    
-    # Fallback to enhanced read
-    echo "Could not install whiptail. Using text-based interface."
-    TUI_MODE="enhanced_read"
-    return 0
+    echo "whiptail installed successfully."
 }
 
 # Show a yes/no dialog
 show_yesno() {
     local title="$1"
     local message="$2"
-    
-    if [[ "$TUI_MODE" == "whiptail" ]]; then
-        whiptail --title "$title" --yesno "$message" 0 0
-        return $?
-    else
-        echo -e "${COLOR_CYAN}${COLOR_BOLD}=== $title ===${COLOR_RESET}"
-        echo -e "$message"
-        read -r -p "Continue? [Y/n] " reply
-        if [[ $reply =~ ^[Yy]$ ]] || [[ -z $reply ]]; then
-            return 0
-        else
-            return 1
-        fi
-    fi
+
+    whiptail --title "$title" --yesno "$message" 0 0
 }
 
 # ============================================================================
@@ -69,6 +48,37 @@ show_yesno() {
 # machine, so only use it for defaults, never to block anything.
 has_desktop() {
     [[ -n "${XDG_CURRENT_DESKTOP-}" ]] || [[ -n "${GDMSESSION-}" ]]
+}
+
+# Which desktop fcitx5 should be set up for: gnome, kde or other
+detect_desktop() {
+    case "${XDG_CURRENT_DESKTOP-}" in
+        *GNOME*)
+            echo "gnome"
+            return
+            ;;
+        *KDE*)
+            echo "kde"
+            return
+            ;;
+    esac
+
+    # No session to ask (e.g. over SSH): go by what is installed, if unambiguous
+    if [[ -z "${XDG_CURRENT_DESKTOP-}" ]]; then
+        if command -v gnome-shell &> /dev/null && ! command -v plasmashell &> /dev/null; then
+            echo "gnome"
+            return
+        fi
+        if command -v plasmashell &> /dev/null && ! command -v gnome-shell &> /dev/null; then
+            echo "kde"
+            return
+        fi
+    fi
+    echo "other"
+}
+
+is_deb_installed() {
+    [[ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null)" == ii* ]]
 }
 
 is_zsh_installed() {
@@ -104,7 +114,8 @@ is_nomachine_installed() {
 }
 
 is_rustdesk_installed() {
-    dpkg -l rustdesk 2>/dev/null | grep -q '^ii'
+    # rustdesk-unattended-wayland replaces/conflicts with rustdesk, so accept either.
+    is_deb_installed rustdesk || is_deb_installed rustdesk-unattended-wayland
 }
 
 is_easytier_cli_installed() {
@@ -119,17 +130,55 @@ is_ssh_tunnel_service_installed() {
     [ -f /etc/systemd/system/reverse-tunnel@.service ]
 }
 
-# Requires the grammar model too, so a partial install is offered again
+RIME_DIR="$HOME/.local/share/fcitx5/rime"
+RIME_GRAMMAR_MODEL="$RIME_DIR/wanxiang-lts-zh-hans.gram"
+
+# The grammar model is an option, so it does not count here. The menu label
+# says when it is missing (see installed_label).
 is_chinese_input_installed() {
-    local rime_dir="$HOME/.local/share/fcitx5/rime"
-    dpkg -l fcitx5-rime 2>/dev/null | grep -q '^ii' &&
-        [ -f "$rime_dir/rime_ice.schema.yaml" ] &&
-        [ -f "$rime_dir/wanxiang-lts-zh-hans.gram" ]
+    is_deb_installed fcitx5-rime && [ -f "$RIME_DIR/rime_ice.schema.yaml" ]
+}
+
+# Text for the [...] tag of an installed component in the menu
+installed_label() {
+    case "$1" in
+        rustdesk)
+            if is_deb_installed rustdesk-unattended-wayland; then
+                echo "INSTALLED: unattended"
+            else
+                echo "INSTALLED: regular"
+            fi
+            ;;
+        chinese_input)
+            if [ -f "$RIME_GRAMMAR_MODEL" ]; then
+                echo "INSTALLED"
+            else
+                echo "INSTALLED, no grammar model"
+            fi
+            ;;
+        *)
+            echo "INSTALLED"
+            ;;
+    esac
 }
 
 # ============================================================================
 # Installation Functions
 # ============================================================================
+#
+# main() runs each component installer in a subshell with `set -e`: the first
+# failing command fails the component, and `exit` only ends that component.
+# Values chosen on the options page are in OPT_VALUE.
+
+# Status an installer returns to stop the whole run because the user has to
+# log out and back in before anything else can be installed.
+STOP_AND_RELOGIN=10
+
+# Add a line to the "Next steps" block of the final summary. Installers cannot
+# change variables of the main shell, so the lines travel through a file.
+add_note() {
+    echo "$1" >> "$NOTES_DIR/$CURRENT_COMPONENT"
+}
 
 install_common_packages() {
     COMMON_PACKAGES=(
@@ -168,9 +217,9 @@ install_zsh() {
         echo "Installing Zsh..."
         sudo apt install -y zsh
         chsh -s "$(which zsh)"
-        echo "Please log out and log back in to start using Zsh as your default shell."
-        echo "After logging back in, run this script again to continue with remaining installations."
-        exit 0
+        # $SHELL only changes after logging back in, and later installers pick
+        # the rc file to write to from it, so the run stops here.
+        return "$STOP_AND_RELOGIN"
     fi
     echo "Installing Oh My Zsh..."
     sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
@@ -418,10 +467,23 @@ install_nomachine() {
 }
 
 install_rustdesk() {
-    echo "Installing Rustdesk..."
+    local variant="${OPT_VALUE[rustdesk.variant]}"
+    local debs
+
+    echo "Installing Rustdesk ($variant build)..."
     TMP=$(mktemp).deb
-    URL=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | grep url | grep "$(uname -m)\.deb" | cut -d : -f 2,3 | tr -d \")
-    wget -O $TMP $(echo $URL)
+    # A release carries both builds; only the unattended one has "unattended" in its file name
+    debs=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | grep url | grep "$(uname -m)\.deb" | cut -d : -f 2,3 | tr -d '" ') || true
+    if [[ "$variant" == "unattended" ]]; then
+        URL=$(grep unattended <<< "$debs" || true)
+    else
+        URL=$(grep -v unattended <<< "$debs" || true)
+    fi
+    if [[ -z "$URL" ]]; then
+        echo "No $variant Rustdesk package for $(uname -m) in the latest release."
+        return 1
+    fi
+    wget -O $TMP "$URL"
     sudo apt install -y $TMP
     rm -f $TMP
     echo "Rustdesk installation complete."
@@ -487,8 +549,8 @@ WantedBy=multi-user.target
 EOF
     sudo systemctl daemon-reload
     echo "Easytier CLI installation complete."
-    echo "Remember to create your own config file based on /opt/easytier/config/default.conf"
-    echo "Enable the service using: sudo systemctl enable --now easytier@<your_config.conf>"
+    add_note "Create your own config file based on /opt/easytier/config/default.conf"
+    add_note "Enable the service: sudo systemctl enable --now easytier@<config file name without .conf>"
 }
 
 install_easytier_gui() {
@@ -538,35 +600,147 @@ WantedBy=multi-user.target
 EOF
     sudo systemctl daemon-reload
     echo "SSH reverse tunnel service created."
-    echo "Remember to replace placeholders in /etc/systemd/system/reverse-tunnel@.service."
-    echo "Enable and start the service using: sudo systemctl enable --now reverse-tunnel@<remote_port>"
+    add_note "Replace the placeholders in /etc/systemd/system/reverse-tunnel@.service"
+    add_note "Enable and start the service: sudo systemctl enable --now reverse-tunnel@<remote_port>"
 }
 
-# Install rime-ice and its grammar model into the fcitx5 Rime directory with
-# plum, the Rime package manager. Run plum from a local clone: piping its
-# installer in through curl reports success even when the download fails.
+# Install rime-ice, and its grammar model if chosen, into the fcitx5 Rime
+# directory with plum, the Rime package manager. Run plum from a local clone:
+# piping its installer in through curl reports success even when the download
+# fails.
 install_rime_ice() {
     local plum_dir
     local status=0
     plum_dir=$(mktemp -d) || return 1
     git clone --depth 1 https://github.com/rime/plum.git "$plum_dir" &&
-        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice &&
-        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice:others/recipes/grammar:schema=rime_ice ||
+        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice ||
         status=1
+    if [[ "$status" -eq 0 && "${OPT_VALUE[chinese_input.grammar]}" == "yes" ]]; then
+        rime_frontend=fcitx5-rime bash "$plum_dir/rime-install" iDvel/rime-ice:others/recipes/grammar:schema=rime_ice ||
+            status=1
+    fi
     rm -rf "$plum_dir"
     return "$status"
+}
+
+# KDE Plasma. On Wayland, KWin has to start fcitx5 itself, and GTK_IM_MODULE and
+# QT_IM_MODULE must stay unset (https://fcitx-im.org/wiki/Using_Fcitx_5_on_Wayland).
+# X11 sessions keep the im-config setup.
+setup_fcitx5_kde() {
+    local kwriteconfig current
+    local env_dir="$HOME/.config/plasma-workspace/env"
+
+    # Same as System Settings > Keyboard > Virtual Keyboard > Fcitx 5. An fcitx5
+    # entry that is already selected there stays: fcitx5 ships two of them.
+    if ! kwriteconfig=$(command -v kwriteconfig6 || command -v kwriteconfig5); then
+        echo "kwriteconfig not found: is KDE Plasma installed?"
+        return 1
+    fi
+    current=$("${kwriteconfig/kwrite/kread}" --file kwinrc --group Wayland --key InputMethod 2> /dev/null || true)
+    if [[ "${current,,}" != *fcitx5* ]]; then
+        "$kwriteconfig" --file kwinrc --group Wayland --key InputMethod \
+            /usr/share/applications/org.fcitx.Fcitx5.desktop || return 1
+    fi
+
+    # Replace the file im-config just wrote. It is a shell snippet that
+    # im-config sources at login, so it can stand down in the one session where
+    # KWin does the work. Without this, a bash login would still get
+    # GTK_IM_MODULE and QT_IM_MODULE and a second fcitx5 from im-config.
+    cat > "$HOME/.xinputrc" << 'EOF' || return 1
+# Written by .dotfiles/post-installation.sh. im-config treats this file as
+# manually managed; delete it to configure im-config yourself.
+# Plasma on Wayland: KWin starts fcitx5, so im-config does nothing there.
+if [ "$XDG_SESSION_TYPE" != "wayland" ] || [ "$XDG_CURRENT_DESKTOP" != "KDE" ]; then
+    run_im fcitx5
+fi
+EOF
+
+    # Plasma sources this at session start, whatever the login shell is. It
+    # applies assignments only, so an `unset` here would have no effect.
+    mkdir -p "$env_dir" || return 1
+    cat > "$env_dir/fcitx5.sh" << 'EOF'
+# Written by .dotfiles/post-installation.sh.
+# Plasma on Wayland: apps reach fcitx5 through KWin, only XWayland apps need this.
+if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+    export XMODIFIERS=@im=fcitx
+fi
+EOF
+}
+
+# GNOME. On Wayland nothing starts fcitx5 or sets its variables reliably:
+# im-config reaches Wayland sessions only through /etc/profile.d, which a zsh
+# login does not read, and from version 0.59 it skips Wayland altogether. So
+# both are done here in a way GDM applies whatever the login shell is.
+# GTK_IM_MODULE stays unset, as the fcitx docs recommend for GNOME.
+setup_fcitx5_gnome() {
+    # Not whichever gsettings is first in PATH: Homebrew's lacks the GNOME schemas
+    local gsettings=/usr/bin/gsettings
+    local schema=org.gnome.settings-daemon.plugins.xsettings
+    local env_dir="$HOME/.config/environment.d"
+    local autostart_dir="$HOME/.config/autostart"
+    local overrides
+
+    mkdir -p "$autostart_dir" "$env_dir" || return 1
+    cp /usr/share/applications/org.fcitx.Fcitx5.desktop "$autostart_dir/" || return 1
+    cat > "$env_dir/fcitx5.conf" << 'EOF' || return 1
+# Written by .dotfiles/post-installation.sh
+XMODIFIERS=@im=fcitx
+QT_IM_MODULE=fcitx
+EOF
+
+    # Makes GTK apps that run on X11 or XWayland use fcitx. The setting is one
+    # dictionary, so it is only written when nothing else is in it.
+    overrides=$("$gsettings" get "$schema" overrides 2> /dev/null || true)
+    if [[ "$overrides" != *"'Gtk/IMModule': <'fcitx'>"* ]]; then
+        if [[ "$overrides" != "@a{sv} {}" ]] ||
+            ! "$gsettings" set "$schema" overrides "{'Gtk/IMModule':<'fcitx'>}"; then
+            add_note "Add 'Gtk/IMModule':<'fcitx'> to the overrides of $schema (gsettings), from a GNOME session"
+        fi
+    fi
+
+    # Kimpanel draws the candidate window; without it the window cannot show
+    # over GNOME Shell's own UI. Debian packages it, Ubuntu does not.
+    if apt-cache show gnome-shell-extension-kimpanel &> /dev/null; then
+        sudo apt install -y gnome-shell-extension-kimpanel || return 1
+        add_note "Enable the Kimpanel extension in the Extensions app"
+    else
+        add_note "Install the Kimpanel extension: https://extensions.gnome.org/extension/261/kimpanel/"
+    fi
 }
 
 install_chinese_input() {
     local status=0
     local themes="$HOME/.local/share/fcitx5/themes"
+    local desktop="${OPT_VALUE[chinese_input.desktop]}"
+    local -a packages=(git curl wget fcitx5 fcitx5-chinese-addons fcitx5-rime
+        fcitx5-config-qt im-config librime-plugin-lua librime-plugin-octagram)
+
+    if [[ "$desktop" == "kde" ]]; then
+        packages+=(kde-config-fcitx5)
+    fi
 
     echo "Installing fcitx5 with Rime..."
-    sudo apt install -y git curl wget fcitx5 fcitx5-chinese-addons fcitx5-rime \
-        fcitx5-config-qt im-config librime-plugin-lua librime-plugin-octagram || return 1
+    sudo apt install -y "${packages[@]}" || return 1
+
+    # im-config covers X11 sessions on every desktop. It refuses to touch a
+    # hand-edited ~/.xinputrc, and counts the one setup_fcitx5_kde writes as such.
+    if grep -qs 'post-installation.sh' "$HOME/.xinputrc"; then
+        rm -f "$HOME/.xinputrc"
+    fi
     im-config -n fcitx5 || return 1
 
-    echo "Installing rime-ice and its grammar model..."
+    case "$desktop" in
+        kde)
+            echo "Setting up fcitx5 for KDE Plasma..."
+            setup_fcitx5_kde || status=1
+            ;;
+        gnome)
+            echo "Setting up fcitx5 for GNOME..."
+            setup_fcitx5_gnome || status=1
+            ;;
+    esac
+
+    echo "Installing rime-ice..."
     install_rime_ice || status=1
 
     echo "Installing Fluent themes for fcitx5..."
@@ -574,11 +748,7 @@ install_chinese_input() {
     wget -qO- https://github.com/Reverier-Xu/Fluent-fcitx5/archive/refs/heads/master.tar.gz |
         tar -xz -C "$themes" --strip-components=1 --wildcards '*/Fluent*' || status=1
 
-    echo "Reboot, then use fcitx5-configtool to:"
-    echo "  - add rime"
-    echo "  - deploy rime"
-    echo "  - change keymaps"
-    echo "  - pick a Fluent theme"
+    add_note "After logging back in, run fcitx5-configtool to add Rime, deploy it, change keymaps and pick a Fluent theme"
     return "$status"
 }
 
@@ -662,182 +832,287 @@ is_default_selected() {
     [[ -z "${COMP_REQUIRES_DESKTOP[$1]-}" ]] || has_desktop
 }
 
-# Build and show component selection menu
-show_component_menu() {
-    local -a selected_components=()
-    
-    if [[ "$TUI_MODE" == "whiptail" ]]; then
-        # Build whiptail checklist arguments
-        local -a menu_args=()
-        for comp in "${COMPONENTS[@]}"; do
-            local detect_func="${COMP_DETECT[$comp]}"
-            local name="${COMP_NAMES[$comp]}"
-            
-            if $detect_func; then
-                # Installed - show with tag, default OFF
-                menu_args+=("$comp" "[INSTALLED] $name" "OFF")
-            elif is_default_selected "$comp"; then
-                # Not installed - default ON
-                menu_args+=("$comp" "$name" "ON")
-            else
-                # Not installed, but needs a desktop that wasn't detected - default OFF
-                menu_args+=("$comp" "$name" "OFF")
-            fi
-        done
-        
-        # Show checklist
-        local result
-        result=$(whiptail --title "Component Installation" \
-            --checklist "Select components to install (Space to toggle, Enter to confirm):" \
-            0 0 0 "${menu_args[@]}" \
-            3>&1 1>&2 2>&3)
-        
-        # Parse result
-        if [ $? -eq 0 ]; then
-            # Remove quotes and convert to array
-            result=$(echo "$result" | tr -d '"')
-            selected_components=($result)
-        fi
-    else
-        # Enhanced read mode
-        # All interactive UI goes to stderr (>&2) so it's not captured by command substitution
-        # Only the final result goes to stdout
-        local -a toggle_status=()
-        
-        # Initialize toggle status
-        for comp in "${COMPONENTS[@]}"; do
-            local detect_func="${COMP_DETECT[$comp]}"
-            if $detect_func; then
-                toggle_status+=(0)  # Installed, default off
-            elif is_default_selected "$comp"; then
-                toggle_status+=(1)  # Not installed, default on
-            else
-                toggle_status+=(0)  # Not installed, needs a desktop that wasn't detected
-            fi
-        done
-        
-        # Display menu
-        while true; do
-            # Clear screen for clean display
-            clear >&2
-            
-            echo -e "${COLOR_CYAN}${COLOR_BOLD}" >&2
-            echo "================================================================================" >&2
-            echo "                    Component Installation Menu" >&2
-            echo "================================================================================" >&2
-            echo -e "${COLOR_RESET}" >&2
-            echo "" >&2
+# What a component needs, once installed, before it is usable, as
+# "<level>|<reason>". restart_need has the cases that depend on an option.
+declare -A COMP_RESTART=(
+    ["zsh"]="terminal|Oh My Zsh set up in ~/.zshrc"
+    ["homebrew"]="terminal|shell rc file changed"
+    ["miniconda"]="terminal|shell rc file changed"
+    ["neovim"]="terminal|shell rc file changed"
+    ["docker"]="relogin|added to the docker group"
+    ["chinese_input"]="relogin|input method switched to fcitx5"
+)
 
-            # Count selected items
-            local selected_count=0
-            for status in "${toggle_status[@]}"; do
-                if [ $status -eq 1 ]; then
-                    selected_count=$((selected_count + 1))
-                fi
-            done
+# Strongest first
+declare -a RESTART_LEVELS=("reboot" "relogin" "terminal")
 
-            idx=0
-            for comp in "${COMPONENTS[@]}"; do
-                local detect_func="${COMP_DETECT[$comp]}"
-                local name="${COMP_NAMES[$comp]}"
-                local status_marker=""
-                local num_display=$(printf "%2d" $((idx+1)))
-                
-                if $detect_func; then
-                    # Installed
-                    if [ ${toggle_status[$idx]} -eq 1 ]; then
-                        status_marker="${COLOR_YELLOW}[x]${COLOR_RESET}"
-                    else
-                        status_marker="[ ]"
-                    fi
-                    echo -e " ${num_display}. $status_marker $name ${COLOR_GREEN}✓ INSTALLED${COLOR_RESET}" >&2
-                else
-                    # Not installed
-                    if [ ${toggle_status[$idx]} -eq 1 ]; then
-                        status_marker="${COLOR_YELLOW}[x]${COLOR_RESET}"
-                    else
-                        status_marker="[ ]"
-                    fi
-                    echo -e " ${num_display}. $status_marker $name" >&2
-                fi
-                idx=$((idx + 1))
-            done
-            
-            echo "" >&2
-            echo -e "${COLOR_CYAN}${COLOR_BOLD}Selected: $selected_count component(s)${COLOR_RESET}" >&2
-            echo "" >&2
-            echo -e "${COLOR_CYAN}Commands:${COLOR_RESET}" >&2
-            echo "  - Enter numbers to toggle (space-separated, e.g., '1 3 5')" >&2
-            echo "  - 'A' to select all" >&2
-            echo "  - 'N' to select none" >&2
-            echo -e "  - Press ${COLOR_BOLD}Enter${COLOR_RESET} to continue with selected items" >&2
-            echo "" >&2
-            echo -n "Your choice: " >&2
-            read -r input </dev/tty
-            
-            # If empty, break and proceed
-            if [[ -z "$input" ]]; then
-                break
-            fi
-            
-            # Handle special commands
-            if [[ "$input" == "a" ]] || [[ "$input" == "A" ]]; then
-                for i in "${!toggle_status[@]}"; do
-                    toggle_status[$i]=1
-                done
-                continue
-            elif [[ "$input" == "n" ]] || [[ "$input" == "N" ]]; then
-                for i in "${!toggle_status[@]}"; do
-                    toggle_status[$i]=0
-                done
-                continue
-            fi
-            
-            # Toggle specified items
-            for num in $input; do
-                if [[ "$num" =~ ^[0-9]+$ ]]; then
-                    local idx=$((num - 1))
-                    if [ $idx -ge 0 ] && [ $idx -lt ${#COMPONENTS[@]} ]; then
-                        if [ ${toggle_status[$idx]} -eq 1 ]; then
-                            toggle_status[$idx]=0
-                        else
-                            toggle_status[$idx]=1
-                        fi
-                    fi
-                fi
-            done
-        done
-        
-        # Build selected components array
-        idx=0
-        for comp in "${COMPONENTS[@]}"; do
-            if [ ${toggle_status[$idx]} -eq 1 ]; then
-                selected_components+=("$comp")
-            fi
-            idx=$((idx + 1))
-        done
+declare -A RESTART_LABELS=(
+    ["reboot"]="Reboot"
+    ["relogin"]="Log out and in"
+    ["terminal"]="New terminal"
+)
+
+restart_need() {
+    # GNOME gets the fcitx5 variables from ~/.config/environment.d, and the
+    # fcitx docs advise a reboot for changes there to take effect
+    if [[ "$1" == "chinese_input" && "${OPT_VALUE[chinese_input.desktop]}" == "gnome" ]]; then
+        echo "reboot|input method switched to fcitx5"
+        return
     fi
-    
-    # Return selected components
-    echo "${selected_components[@]}"
+    echo "${COMP_RESTART[$1]-}"
+}
+
+# ============================================================================
+# Component Options
+# ============================================================================
+
+# Options are named "<component>.<option>" and are all pick-one lists. The
+# options page offers those of the selected components, and installers read
+# the chosen value from OPT_VALUE.
+declare -a OPTIONS=(
+    "rustdesk.variant"
+    "chinese_input.grammar"
+    "chinese_input.desktop"
+)
+
+declare -A OPT_NAMES=(
+    ["rustdesk.variant"]="RustDesk build"
+    ["chinese_input.grammar"]="rime-ice grammar model"
+    ["chinese_input.desktop"]="Desktop to set fcitx5 up for"
+)
+
+# Choice ids, space-separated
+declare -A OPT_CHOICES=(
+    ["rustdesk.variant"]="regular unattended"
+    ["chinese_input.grammar"]="yes no"
+    ["chinese_input.desktop"]="gnome kde other"
+)
+
+declare -A OPT_CHOICE_NAMES=(
+    ["rustdesk.variant.regular"]="Regular"
+    ["rustdesk.variant.unattended"]="Unattended Wayland (preview)"
+    ["chinese_input.grammar.yes"]="Yes (about 400 MB)"
+    ["chinese_input.grammar.no"]="No"
+    ["chinese_input.desktop.gnome"]="GNOME"
+    ["chinese_input.desktop.kde"]="KDE Plasma"
+    ["chinese_input.desktop.other"]="Other (X11 sessions only)"
+)
+
+declare -A OPT_VALUE=()
+
+# Give every option its starting value, going by the state of this machine
+init_option_defaults() {
+    OPT_VALUE["rustdesk.variant"]="regular"
+    if [[ "$(uname -m)" != "x86_64" ]]; then
+        # The unattended build is x86_64 only, which leaves nothing to choose
+        OPT_CHOICES["rustdesk.variant"]="regular"
+    elif is_deb_installed rustdesk-unattended-wayland; then
+        OPT_VALUE["rustdesk.variant"]="unattended"
+    fi
+    OPT_VALUE["chinese_input.grammar"]="yes"
+    OPT_VALUE["chinese_input.desktop"]=$(detect_desktop)
+}
+
+# Print the options of the given components that have more than one choice
+active_options() {
+    local opt
+    local -a choices
+
+    for opt in "${OPTIONS[@]}"; do
+        if [[ " $* " != *" ${opt%%.*} "* ]]; then
+            continue
+        fi
+        choices=(${OPT_CHOICES[$opt]})
+        if [ ${#choices[@]} -gt 1 ]; then
+            echo "$opt"
+        fi
+    done
+}
+
+# An option and its current value, e.g. "RustDesk build: Regular"
+option_summary() {
+    local key="$1.${OPT_VALUE[$1]}"
+    echo "${OPT_NAMES[$1]}: ${OPT_CHOICE_NAMES[$key]}"
+}
+
+# ============================================================================
+# Menus
+# ============================================================================
+
+# Checklist of components. Prints the selected ones, or nothing on cancel.
+show_component_menu() {
+    local -a menu_args=()
+    local comp name result
+
+    for comp in "${COMPONENTS[@]}"; do
+        name="${COMP_NAMES[$comp]}"
+        if ${COMP_DETECT[$comp]}; then
+            # Installed - show with tag, default OFF
+            menu_args+=("$comp" "[$(installed_label "$comp")] $name" "OFF")
+        elif is_default_selected "$comp"; then
+            # Not installed - default ON
+            menu_args+=("$comp" "$name" "ON")
+        else
+            # Not installed, but needs a desktop that wasn't detected - default OFF
+            menu_args+=("$comp" "$name" "OFF")
+        fi
+    done
+
+    result=$(whiptail --title "Component Installation" \
+        --checklist "Select components to install (Space to toggle, Enter to confirm):" \
+        0 0 0 "${menu_args[@]}" \
+        3>&1 1>&2 2>&3) || return 0
+
+    # whiptail puts each selected tag in quotes
+    echo "$result" | tr -d '"'
+}
+
+# Pick-one list for a single option
+edit_option() {
+    local opt="$1"
+    local -a radio_args=()
+    local choice state result
+
+    for choice in ${OPT_CHOICES[$opt]}; do
+        state="OFF"
+        if [[ "$choice" == "${OPT_VALUE[$opt]}" ]]; then
+            state="ON"
+        fi
+        radio_args+=("$choice" "${OPT_CHOICE_NAMES[$opt.$choice]}" "$state")
+    done
+
+    if result=$(whiptail --title "${OPT_NAMES[$opt]}" --notags \
+        --radiolist "Space to select, Enter to confirm:" \
+        0 0 0 "${radio_args[@]}" \
+        3>&1 1>&2 2>&3) && [[ -n "$result" ]]; then
+        OPT_VALUE[$opt]="$result"
+    fi
+}
+
+# Settings page: one row per given option, showing its current value. It
+# changes OPT_VALUE, so it must not run in a subshell. Returns 1 on cancel.
+show_options_page() {
+    local -a menu_args
+    local opt choice
+
+    while true; do
+        menu_args=()
+        for opt in "$@"; do
+            menu_args+=("$opt" "$(option_summary "$opt")")
+        done
+        menu_args+=("continue" "Continue")
+
+        choice=$(whiptail --title "Component Options" --notags \
+            --default-item "continue" --ok-button "Select" \
+            --menu "Press Enter on an option to change it, or on Continue to go on:" \
+            0 0 0 "${menu_args[@]}" \
+            3>&1 1>&2 2>&3) || return 1
+
+        if [[ "$choice" == "continue" ]]; then
+            return 0
+        fi
+        edit_option "$choice"
+    done
 }
 
 # ============================================================================
 # Main Execution
 # ============================================================================
 
+# Outcome of the run, filled by main() for print_summary
+declare -a DONE_OK=()
+declare -a DONE_FAILED=()
+declare -a NOT_ATTEMPTED=()
+STOPPED_AT=""
+
+# Results, restart needs and follow-up notes, all in one place at the end
+print_summary() {
+    local comp level need note
+    local -a restart_lines=()
+    local -a noted=()
+
+    echo ""
+    echo "=========================================================================="
+    echo "                    Installation Complete!"
+    echo "=========================================================================="
+
+    if [ ${#DONE_OK[@]} -gt 0 ]; then
+        echo ""
+        echo -e "${COLOR_BOLD}Installed (${#DONE_OK[@]}):${COLOR_RESET}"
+        for comp in "${DONE_OK[@]}"; do
+            echo -e "  ${COLOR_GREEN}✓${COLOR_RESET} ${COMP_NAMES[$comp]}"
+        done
+    fi
+
+    if [ ${#DONE_FAILED[@]} -gt 0 ]; then
+        echo ""
+        echo -e "${COLOR_BOLD}Failed (${#DONE_FAILED[@]}):${COLOR_RESET}"
+        for comp in "${DONE_FAILED[@]}"; do
+            echo -e "  ${COLOR_RED}✗${COLOR_RESET} ${COMP_NAMES[$comp]}"
+        done
+    fi
+
+    if [ ${#NOT_ATTEMPTED[@]} -gt 0 ]; then
+        echo ""
+        echo -e "${COLOR_BOLD}Not attempted (${#NOT_ATTEMPTED[@]}):${COLOR_RESET}"
+        for comp in "${NOT_ATTEMPTED[@]}"; do
+            echo -e "  ${COLOR_YELLOW}-${COLOR_RESET} ${COMP_NAMES[$comp]}"
+        done
+    fi
+
+    for level in "${RESTART_LEVELS[@]}"; do
+        if [[ "$level" == "relogin" && -n "$STOPPED_AT" ]]; then
+            restart_lines+=("$(printf '  %-15s %s (login shell changed; run this script again afterwards)' \
+                "${RESTART_LABELS[$level]}" "${COMP_NAMES[$STOPPED_AT]}")")
+        fi
+        for comp in "${DONE_OK[@]}"; do
+            need=$(restart_need "$comp")
+            if [[ "${need%%|*}" == "$level" ]]; then
+                restart_lines+=("$(printf '  %-15s %s (%s)' \
+                    "${RESTART_LABELS[$level]}" "${COMP_NAMES[$comp]}" "${need#*|}")")
+            fi
+        done
+    done
+    if [ ${#restart_lines[@]} -gt 0 ]; then
+        echo ""
+        echo -e "${COLOR_BOLD}Restart needed:${COLOR_RESET}"
+        printf '%s\n' "${restart_lines[@]}"
+    fi
+
+    for comp in "${DONE_OK[@]}"; do
+        if [ -s "$NOTES_DIR/$comp" ]; then
+            noted+=("$comp")
+        fi
+    done
+    if [ ${#noted[@]} -gt 0 ]; then
+        echo ""
+        echo -e "${COLOR_BOLD}Next steps:${COLOR_RESET}"
+        for comp in "${noted[@]}"; do
+            echo "  ${COMP_NAMES[$comp]}"
+            while IFS= read -r note; do
+                echo "    - $note"
+            done < "$NOTES_DIR/$comp"
+        done
+    fi
+    echo ""
+}
+
 main() {
+    local -a selected_components
+    local -a options
+    local comp opt confirm_message rc i
+
     # Check if apt is available
     if ! command -v apt &> /dev/null; then
         echo "apt package manager not found. This script is intended for Debian-based systems."
         exit 1
     fi
-    
+
     echo "=========================================================================="
     echo "        Debian/Ubuntu Post-Installation Setup Script"
     echo "=========================================================================="
     echo ""
-    
+
     # Update package lists
     echo "Updating package lists... (also grant sudo permissions upfront)"
     sudo apt update
@@ -845,7 +1120,7 @@ main() {
     # Ensure TUI is available
     echo ""
     ensure_tui_available
-    
+
     # Install common packages first
     echo ""
     if show_yesno "Install Common Packages" "Install essential packages (git, curl, wget, vim, htop, build-essential, etc.)?\n\nThis is recommended for most users."; then
@@ -853,60 +1128,84 @@ main() {
     else
         echo "Skipping common packages installation."
     fi
-    
+
     # Show component selection menu
     echo ""
-    local selected_components
     selected_components=($(show_component_menu))
-    
+
     # Check if any components were selected
     if [ ${#selected_components[@]} -eq 0 ]; then
         echo ""
         echo "No components selected. Exiting."
         exit 0
     fi
-    
+
+    # Let the user adjust the options of the selected components
+    init_option_defaults
+    options=($(active_options "${selected_components[@]}"))
+    if [ ${#options[@]} -gt 0 ]; then
+        if ! show_options_page "${options[@]}"; then
+            echo "Installation cancelled."
+            exit 0
+        fi
+    fi
+
     # Confirm installation
-    local confirm_message=""
-    confirm_message+="The following components will be installed:\n\n"
+    confirm_message="The following components will be installed:\n\n"
     for comp in "${selected_components[@]}"; do
         confirm_message+="- ${COMP_NAMES[$comp]}\n"
+        for opt in "${options[@]}"; do
+            if [[ "${opt%%.*}" == "$comp" ]]; then
+                confirm_message+="    $(option_summary "$opt")\n"
+            fi
+        done
     done
     confirm_message+="\nDo you want to proceed with the installation?"
     if ! show_yesno "Confirm Installation" "$confirm_message"; then
         echo "Installation cancelled."
         exit 0
     fi
-    
+
     # Install selected components
     echo ""
     echo "=========================================================================="
     echo "                    Starting Installation"
     echo "=========================================================================="
     echo ""
-    
-    for comp in "${selected_components[@]}"; do
+
+    NOTES_DIR=$(mktemp -d)
+    trap 'rm -rf "$NOTES_DIR"' EXIT
+
+    for i in "${!selected_components[@]}"; do
+        comp="${selected_components[$i]}"
         echo ""
         echo -e "${COLOR_CYAN}${COLOR_BOLD}>>> Installing: ${COMP_NAMES[$comp]}${COLOR_RESET}"
         echo ""
-        
-        local install_func="${COMP_INSTALL[$comp]}"
-        if $install_func; then
-            echo -e "${COLOR_GREEN}✓ ${COMP_NAMES[$comp]} installed successfully${COLOR_RESET}"
+
+        # The subshell must not run as an `if` condition or in a && / || list:
+        # bash ignores `set -e` inside those, and a failed step would then go
+        # unnoticed, with the installer still returning success.
+        CURRENT_COMPONENT="$comp"
+        set +e
+        (
+            set -e
+            "${COMP_INSTALL[$comp]}"
+        )
+        rc=$?
+        set -e
+
+        if [ "$rc" -eq 0 ]; then
+            DONE_OK+=("$comp")
+        elif [ "$rc" -eq "$STOP_AND_RELOGIN" ]; then
+            STOPPED_AT="$comp"
+            NOT_ATTEMPTED=("${selected_components[@]:i+1}")
+            break
         else
-            echo -e "${COLOR_RED}✗ ${COMP_NAMES[$comp]} installation failed${COLOR_RESET}"
+            DONE_FAILED+=("$comp")
         fi
     done
-    
-    # Show completion message
-    echo ""
-    echo "=========================================================================="
-    echo "                    Installation Complete!"
-    echo "=========================================================================="
-    echo ""
-    echo "All selected components have been processed."
-    echo "You may need to restart your terminal or log out/in for some changes to take effect."
-    echo ""
+
+    print_summary
 }
 
 # Run main function
@@ -914,4 +1213,3 @@ main() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main
 fi
-
