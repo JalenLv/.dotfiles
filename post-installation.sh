@@ -600,7 +600,7 @@ declare -a COMPONENTS=(
     "easytier_cli"
     "easytier_gui"
     "ssh_tunnel"
-    "chinese_input"  # keep last: its reboot steps print right before the summary
+    "chinese_input"
 )
 
 declare -A COMP_NAMES=(
@@ -616,7 +616,7 @@ declare -A COMP_NAMES=(
     ["easytier_cli"]="EasyTier VPN (CLI)"
     ["easytier_gui"]="EasyTier VPN (GUI)"
     ["ssh_tunnel"]="SSH Reverse Tunnel Service Template"
-    ["chinese_input"]="Chinese Input: fcitx5 + rime-ice"
+    ["chinese_input"]="fcitx5 + rime-ice"
 )
 
 declare -A COMP_DETECT=(
