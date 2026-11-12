@@ -238,6 +238,13 @@ is_rime_tweaks_applied() {
     grep -Fqs "# Rx: $RIME_TWEAKS_ID:" "$RIME_DIR/rime_ice.custom.yaml"
 }
 
+# Label of the block patch_rime_fuzzy writes, in the same form
+RIME_FUZZY_ID="JalenLv/.dotfiles:fuzzy-pinyin"
+
+is_rime_fuzzy_applied() {
+    grep -Fqs "# Rx: $RIME_FUZZY_ID:" "$RIME_DIR/rime_ice.custom.yaml"
+}
+
 # The grammar model is an option, so it does not count here. The menu label
 # says when it is missing (see installed_label).
 is_chinese_input_installed() {
@@ -844,6 +851,39 @@ EOF
     )
 }
 
+# Fuzzy pinyin for in and ing, both ways: "pinyin" and "pingying" both give
+# 拼音. rime-ice ships the two rules commented out in rime_ice.schema.yaml.
+# They have to be appended to speller/algebra, and an append in a plum block
+# replaces the schema's whole list (all 47 spelling rules, down to these 2)
+# unless that block comes first, while plum adds blocks at the end. So they go
+# in a hand-written patch: at the top of rime_ice.custom.yaml instead, which
+# Rime merges plum's blocks into. plum's patch writer only touches the lines
+# from "__patch:" down, so re-running a recipe leaves them alone. The section
+# carries "# Rx: ... {" / "# }" markers like plum's, so a re-run replaces it.
+patch_rime_fuzzy() {
+    local file="$RIME_DIR/rime_ice.custom.yaml"
+    local drop_block='/^# Rx: '"${RIME_FUZZY_ID//\//\\/}"': {$/,/^# }$/ d'
+
+    # Someone else's patch: would make a second key of the same name
+    if [ -f "$file" ] && sed "$drop_block" "$file" | grep -q '^patch:'; then
+        echo "$file already has a patch: section; add the fuzzy pinyin rules to it by hand"
+        return 1
+    fi
+    {
+        echo "# Rx: $RIME_FUZZY_ID: {"
+        cat << 'EOF'
+patch:
+  speller/algebra/+:
+    - derive/in$/ing/   # pin also answers to ping
+    - derive/ing$/in/   # ping also answers to pin
+EOF
+        echo "# }"
+        if [ -f "$file" ]; then
+            sed "$drop_block" "$file"
+        fi
+    } > "$file.new" && mv "$file.new" "$file"
+}
+
 # Install rime-ice, and the grammar model and own settings if chosen, into the
 # fcitx5 Rime directory with plum, the Rime package manager. Run plum from a
 # local clone: piping its installer in through curl reports success even when
@@ -861,6 +901,9 @@ install_rime_ice() {
     fi
     if [[ "$status" -eq 0 && "${OPT_VALUE[chinese_input.tweaks]}" == "yes" ]]; then
         patch_rime_ice "$plum_dir" || status=1
+    fi
+    if [[ "$status" -eq 0 && "${OPT_VALUE[chinese_input.fuzzy]}" == "yes" ]]; then
+        patch_rime_fuzzy || status=1
     fi
     rm -rf "$plum_dir"
     return "$status"
@@ -991,7 +1034,12 @@ install_chinese_input() {
     wget -qO- https://github.com/Reverier-Xu/Fluent-fcitx5/archive/refs/heads/master.tar.gz |
         tar -xz -C "$themes" --strip-components=1 --wildcards '*/Fluent*' || status=1
 
-    add_note "After logging back in, run fcitx5-configtool to add Rime, deploy it, change keymaps and pick a Fluent theme"
+    # Rime keeps using its last build until it is deployed again
+    if [ -d "$RIME_DIR/build" ]; then
+        add_note "Deploy Rime again (fcitx5 tray icon > Deploy) to load the updated rime-ice and its settings"
+    else
+        add_note "After logging back in, run fcitx5-configtool to add Rime, deploy it, change keymaps and pick a Fluent theme"
+    fi
     return "$status"
 }
 
@@ -1132,6 +1180,7 @@ declare -a OPTIONS=(
     "easytier.variant"
     "chinese_input.grammar"
     "chinese_input.tweaks"
+    "chinese_input.fuzzy"
     "chinese_input.desktop"
 )
 
@@ -1143,6 +1192,7 @@ declare -A OPT_NAMES=(
     ["easytier.variant"]="EasyTier build"
     ["chinese_input.grammar"]="rime-ice grammar model"
     ["chinese_input.tweaks"]="rime-ice paging and page size"
+    ["chinese_input.fuzzy"]="rime-ice fuzzy pinyin, in = ing"
     ["chinese_input.desktop"]="Desktop to set fcitx5 up for"
 )
 
@@ -1160,6 +1210,7 @@ declare -A OPT_CHOICES=(
     ["easytier.variant"]="cli gui"
     ["chinese_input.grammar"]="yes no"
     ["chinese_input.tweaks"]="yes no"
+    ["chinese_input.fuzzy"]="yes no"
     ["chinese_input.desktop"]="gnome kde other"
 )
 
@@ -1186,6 +1237,8 @@ declare -A OPT_CHOICE_NAMES=(
     ["chinese_input.grammar.no"]="No"
     ["chinese_input.tweaks.yes"]="Yes (7 per page, comma and period to page)"
     ["chinese_input.tweaks.no"]="No"
+    ["chinese_input.fuzzy.yes"]="Yes (both ways: pingying = pinyin)"
+    ["chinese_input.fuzzy.no"]="No"
     ["chinese_input.desktop.gnome"]="GNOME"
     ["chinese_input.desktop.kde"]="KDE Plasma"
     ["chinese_input.desktop.other"]="Other (X11 sessions only)"
@@ -1272,6 +1325,11 @@ init_option_defaults() {
     if is_rime_tweaks_applied; then
         OPT_VALUE["chinese_input.tweaks"]="no"
         OPT_CHOICE_NAMES["chinese_input.tweaks.no"]="No (already applied)"
+    fi
+    OPT_VALUE["chinese_input.fuzzy"]="yes"
+    if is_rime_fuzzy_applied; then
+        OPT_VALUE["chinese_input.fuzzy"]="no"
+        OPT_CHOICE_NAMES["chinese_input.fuzzy.no"]="No (already applied)"
     fi
     OPT_VALUE["chinese_input.desktop"]=$(detect_desktop)
 }
