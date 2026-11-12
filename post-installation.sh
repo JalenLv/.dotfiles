@@ -461,36 +461,18 @@ install_neovim() {
 
     # Homebrew and Miniconda are there: main() checks COMP_REQUIRES first
     (
-        SHELL_NAME=$(basename "$SHELL")
-        case "$SHELL_NAME" in
-            bash)
-                SHELL_RC="$HOME/.bashrc"
-                ;;
-            zsh)
-                SHELL_RC="$HOME/.zshrc"
-                ;;
-            *)
-                echo "Unsupported shell: $SHELL_NAME"
-                exit 1
-                ;;
-        esac
-        
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         
-        brew install neovim
+        brew install -y neovim
         
-        brew install node@24
-        {
-            echo "# Node.js"
-            echo "export PATH=\"/home/linuxbrew/.linuxbrew/opt/node@24/bin:\$PATH\""
-        } >> "$SHELL_RC"
-        
-        export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:$PATH"
+        brew install -y node@24
+        brew link --overwrite node@24
+
         export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
         corepack enable
         corepack prepare yarn@stable --activate
         
-        brew install tree-sitter-cli
+        brew install -y tree-sitter-cli
         
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate base
@@ -1016,7 +998,6 @@ declare -A COMP_RESTART=(
     ["font"]="relogin|running apps keep the fonts they started with"
     ["homebrew"]="terminal|shell rc file changed"
     ["miniconda"]="terminal|shell rc file changed"
-    ["neovim"]="terminal|shell rc file changed"
     ["docker"]="relogin|added to the docker group"
     ["chinese_input"]="relogin|input method switched to fcitx5"
 )
