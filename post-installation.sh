@@ -146,6 +146,55 @@ is_neovim_installed() {
     command -v nvim &> /dev/null
 }
 
+# Coding agents, in menu order
+CODING_AGENTS="codex claude-code opencode-v2 pi antigravity copilot-cli"
+
+# What `brew install` is given for each agent
+declare -A CODING_AGENT_PACKAGE=(
+    ["codex"]="--cask codex"
+    ["claude-code"]="--cask claude-code@latest"
+    ["opencode-v2"]="anomalyco/tap/opencode-v2"
+    ["pi"]="pi-coding-agent"
+    ["antigravity"]="--cask antigravity-cli"
+    ["copilot-cli"]="--cask copilot-cli"
+)
+
+# The command each agent is run with
+declare -A CODING_AGENT_COMMAND=(
+    ["codex"]="codex"
+    ["claude-code"]="claude"
+    ["opencode-v2"]="opencode"
+    ["pi"]="pi"
+    ["antigravity"]="agy"
+    ["copilot-cli"]="copilot"
+)
+
+# Goes by the command, so an agent installed some other way than Homebrew
+# counts too. Homebrew's bin is checked as well: it may not be on PATH in this
+# shell.
+is_coding_agent_installed() {
+    local cmd="${CODING_AGENT_COMMAND[$1]}"
+
+    command -v "$cmd" &> /dev/null || [ -x "/home/linuxbrew/.linuxbrew/bin/$cmd" ]
+}
+
+# Print the coding agents that are installed
+installed_coding_agents() {
+    local agent
+
+    for agent in $CODING_AGENTS; do
+        if is_coding_agent_installed "$agent"; then
+            echo "$agent"
+        fi
+    done
+}
+
+# Installed as soon as one agent is: which ones to have is a choice. The menu
+# label says how many there are (see installed_label).
+is_coding_agents_installed() {
+    [[ -n "$(installed_coding_agents)" ]]
+}
+
 is_vscode_installed() {
     dpkg -l code 2>/dev/null | grep -q '^ii'
 }
@@ -197,7 +246,14 @@ is_chinese_input_installed() {
 
 # Text for the [...] tag of an installed component in the menu
 installed_label() {
+    local -a all installed
+
     case "$1" in
+        coding_agents)
+            all=($CODING_AGENTS)
+            installed=($(installed_coding_agents))
+            echo "INSTALLED: ${#installed[@]} of ${#all[@]}"
+            ;;
         rustdesk)
             if is_deb_installed rustdesk-unattended-wayland; then
                 echo "INSTALLED: unattended"
@@ -494,6 +550,40 @@ install_neovim() {
         fi
     )
     echo "Neovim installation complete."
+}
+
+# Install the ticked coding agents from Homebrew. One that fails does not stop
+# the others.
+install_coding_agents() {
+    local agent
+    local status=0
+    local sign_in=""
+
+    # Homebrew is there: main() checks COMP_REQUIRES first
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
+    for agent in ${OPT_VALUE[coding_agents.agents]}; do
+        echo "Installing $agent..."
+        # Not quoted: what a cask is installed with is two arguments
+        if brew install -y ${CODING_AGENT_PACKAGE[$agent]}; then
+            sign_in+="${sign_in:+, }${CODING_AGENT_COMMAND[$agent]}"
+        else
+            status=1
+        fi
+    done
+
+    # Pi depends on Homebrew's current node, and linking that one unlinks
+    # node@24, the one the Neovim component links. Link node@24 again so it
+    # stays the default node. Pi is not affected: it starts its own node by path.
+    if [[ " ${OPT_VALUE[coding_agents.agents]} " == *" pi "* && -d "$HOMEBREW_PREFIX/opt/node@24" ]]; then
+        echo "Linking node@24 again..."
+        brew link --overwrite node@24 || status=1
+    fi
+
+    if [[ -n "$sign_in" ]]; then
+        add_note "Run each new agent once to sign in: $sign_in"
+    fi
+    return "$status"
 }
 
 install_vscode() {
@@ -916,6 +1006,7 @@ declare -a COMPONENTS=(
     "homebrew"
     "miniconda"
     "neovim"
+    "coding_agents"
     "vscode"
     "docker"
     "nomachine"
@@ -931,6 +1022,7 @@ declare -A COMP_NAMES=(
     ["homebrew"]="Homebrew Package Manager"
     ["miniconda"]="Miniconda (Python)"
     ["neovim"]="Neovim"
+    ["coding_agents"]="Coding Agents"
     ["vscode"]="Visual Studio Code"
     ["docker"]="Docker"
     ["nomachine"]="NoMachine Remote Desktop"
@@ -946,6 +1038,7 @@ declare -A COMP_DETECT=(
     ["homebrew"]="is_homebrew_installed"
     ["miniconda"]="is_miniconda_installed"
     ["neovim"]="is_neovim_installed"
+    ["coding_agents"]="is_coding_agents_installed"
     ["vscode"]="is_vscode_installed"
     ["docker"]="is_docker_installed"
     ["nomachine"]="is_nomachine_installed"
@@ -961,6 +1054,7 @@ declare -A COMP_INSTALL=(
     ["homebrew"]="install_homebrew"
     ["miniconda"]="install_miniconda"
     ["neovim"]="install_neovim"
+    ["coding_agents"]="install_coding_agents"
     ["vscode"]="install_vscode"
     ["docker"]="install_docker"
     ["nomachine"]="install_nomachine"
@@ -974,6 +1068,7 @@ declare -A COMP_INSTALL=(
 # come earlier in COMPONENTS, which is the order things are installed in.
 declare -A COMP_REQUIRES=(
     ["neovim"]="homebrew miniconda"
+    ["coding_agents"]="homebrew"
 )
 
 # Components only useful with a desktop. Without one detected they start
@@ -1032,6 +1127,7 @@ restart_need() {
 declare -a OPTIONS=(
     "font.sets"
     "font.prefer_sc"
+    "coding_agents.agents"
     "rustdesk.variant"
     "easytier.variant"
     "chinese_input.grammar"
@@ -1042,6 +1138,7 @@ declare -a OPTIONS=(
 declare -A OPT_NAMES=(
     ["font.sets"]="Fonts to install"
     ["font.prefer_sc"]="Prefer Simplified Chinese fonts for Chinese text"
+    ["coding_agents.agents"]="Coding agents to install"
     ["rustdesk.variant"]="RustDesk build"
     ["easytier.variant"]="EasyTier build"
     ["chinese_input.grammar"]="rime-ice grammar model"
@@ -1051,12 +1148,14 @@ declare -A OPT_NAMES=(
 
 declare -A OPT_MULTI=(
     ["font.sets"]=1
+    ["coding_agents.agents"]=1
 )
 
 # Choice ids, space-separated
 declare -A OPT_CHOICES=(
     ["font.sets"]="jetbrains noto_cjk wqy arphic noto_cjk_extra lxgw"
     ["font.prefer_sc"]="yes no"
+    ["coding_agents.agents"]="$CODING_AGENTS"
     ["rustdesk.variant"]="regular unattended"
     ["easytier.variant"]="cli gui"
     ["chinese_input.grammar"]="yes no"
@@ -1073,6 +1172,12 @@ declare -A OPT_CHOICE_NAMES=(
     ["font.sets.lxgw"]="LXGW WenKai (114 MB)"
     ["font.prefer_sc.yes"]="Yes"
     ["font.prefer_sc.no"]="No"
+    ["coding_agents.agents.codex"]="Codex (OpenAI)"
+    ["coding_agents.agents.claude-code"]="Claude Code (Anthropic)"
+    ["coding_agents.agents.opencode-v2"]="OpenCode v2"
+    ["coding_agents.agents.pi"]="Pi (also installs Homebrew's node)"
+    ["coding_agents.agents.antigravity"]="Antigravity CLI (Google)"
+    ["coding_agents.agents.copilot-cli"]="Copilot CLI (GitHub)"
     ["rustdesk.variant.regular"]="Regular"
     ["rustdesk.variant.unattended"]="Unattended Wayland (preview)"
     ["easytier.variant.cli"]="CLI (runs as a service)"
@@ -1092,8 +1197,9 @@ declare -A OPT_VALUE=()
 # what is installed already is not selected again and is labelled as such.
 # An option left with a single choice is not shown on the options page.
 init_option_defaults() {
-    local font_set
+    local font_set agent
     local -a missing_sets=()
+    local -a missing_agents=()
 
     # Fonts: tick the default sets that are not installed yet. LXGW WenKai is
     # not packaged everywhere (Ubuntu 22.04 lacks it).
@@ -1113,6 +1219,16 @@ init_option_defaults() {
         OPT_VALUE["font.prefer_sc"]="no"
         OPT_CHOICE_NAMES["font.prefer_sc.no"]="No (already in place)"
     fi
+
+    # Coding agents: tick the ones that are not installed yet
+    for agent in $CODING_AGENTS; do
+        if is_coding_agent_installed "$agent"; then
+            OPT_CHOICE_NAMES["coding_agents.agents.$agent"]+=" [installed]"
+        else
+            missing_agents+=("$agent")
+        fi
+    done
+    OPT_VALUE["coding_agents.agents"]="${missing_agents[*]}"
 
     # RustDesk: keep whichever build is installed. The unattended one is
     # x86_64 only.
